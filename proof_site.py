@@ -157,6 +157,36 @@ def holders_now(t: dict) -> tuple:
     return None, None
 
 
+def sparkline(hist: list, w: int = 120, h: int = 32, cls: str = "spark") -> str:
+    """Market cap over time as an inline SVG, green when it ended higher than it started, red when lower."""
+    if not hist or len(hist) < 2:
+        return ""
+    x0, x1 = hist[0][0], hist[-1][0]
+    ys = [m for _, m in hist]
+    lo, hi = min(ys), max(ys)
+    span = (hi - lo) or hi or 1
+    pts = [((t - x0) / ((x1 - x0) or 1) * w, h - 2 - (m - lo) / span * (h - 4)) for t, m in hist]
+    line = "M" + " L".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    trend = "up" if ys[-1] >= ys[0] else "down"
+    return (f'<svg class="{cls} {trend}" viewBox="0 0 {w} {h}" preserveAspectRatio="none" aria-hidden="true">'
+            f'<path class="area" d="{line} L{w},{h} L0,{h} Z"/><path class="line" d="{line}"/></svg>')
+
+
+def change(a: dict) -> str:
+    c = (a or {}).get("change_pct")
+    if c is None:
+        return "—"
+    hrs = a.get("change_hours") or 0
+    label = "" if hrs >= 23 else f' <small>in {hrs:g} h</small>' if hrs >= 1 else ' <small>just now</small>'
+    return f'<span class="{"up" if c >= 0 else "down"}">{"+" if c >= 0 else ""}{c:.0f}%</span>{label}'
+
+
+def trades(a: dict) -> str:
+    if not a or a.get("buys_24h") is None:
+        return "—"
+    return f'<span class="up">{a["buys_24h"]}</span> / <span class="down">{a["sells_24h"]}</span>'
+
+
 def curve(t: dict) -> str:
     m = t.get("market") or {}
     if m.get("graduated") or t.get("graduated"):
@@ -323,20 +353,42 @@ def feed_cards(ts: list[dict], now: int, up: str = "") -> str:
         out.append(f"""<li class="card" data-state="{"checking" if s == "unverified" else s}">
 <div class="card-top"><span class="fileno">{fileno(t)}</span><span class="age">{when(t["launched_at"])}</span></div>
 <div class="card-title">{tref(t, up, "tok stretch")}{chip(s)}</div>
-<dl class="card-nums"><div><dt>Market cap</dt><dd>{usd(m.get("mcap_usd"))}</dd></div>
+{trend_row(t)}<dl class="card-nums"><div><dt>Market cap</dt><dd>{usd(m.get("mcap_usd"))}</dd></div>
 <div><dt>Curve</dt><dd>{curve(t)}</dd></div><div><dt>Holders{f" ({hk})" if hk else ""}</dt><dd>{"—" if h is None else h}</dd></div></dl>
 <p class="why">{e(sentence(t["verdict"]["why"]))}{"".join(f" {link(u, 'Receipt', 'rcpt')}" for u in rc)}</p>{extra}</li>""")
     return f'<ol class="feed">{"".join(out)}</ol>'
 
 
+def trend_row(t: dict) -> str:
+    a = t.get("activity") or {}
+    spark = sparkline(a.get("history") or [])
+    vol = a.get("vol_24h_usd")
+    if not spark and vol is None:
+        return ""
+    spark = spark or '<span class="none">The chart fills in as snapshots arrive</span>'
+    return f'<div class="trend">{spark}<span class="tv"><b>{change(a)}</b>{usd(vol)} 24h vol</span></div>'
+
+
+def chart(a: dict) -> str:
+    hist = a.get("history") or []
+    if len(hist) < 2:
+        return ""
+    ys = [m for _, m in hist]
+    hours = (hist[-1][0] - hist[0][0]) / 3600
+    span = f"last {hours:.0f} h" if hours < 48 else f"last {hours / 24:.0f} days"
+    return (f'<figure class="chart">{sparkline(hist, 600, 96)}<figcaption><span>Market cap, {span}</span>'
+            f'<span>low {usd(min(ys))} · high {usd(max(ys))} · now {usd(ys[-1])}</span></figcaption></figure>')
+
+
 def board_table(board: list[dict], now: int, up: str = "") -> str:
     rows = "".join(f"""<tr><td class="num">{i}</td><td>{tref(t, up)}</td><td>{status_chip(t["status"])}</td>
 <td class="score">{(t["scores"] or {}).get("composite") or 0:.0f}</td><td class="hide-sm">{bars(t["scores"])}</td>
-<td class="numcol">{usd((t.get("market") or {}).get("mcap_usd"))}</td><td class="hide-sm">{curve(t)}</td>
+<td class="numcol">{usd((t.get("market") or {}).get("mcap_usd"))}</td>
+<td class="numcol hide-sm">{usd((t.get("activity") or {}).get("vol_24h_usd"))}</td><td class="hide-sm">{curve(t)}</td>
 <td>{chip(state_of(t, now))}</td></tr>""" for i, t in enumerate(board, 1))
     return f"""<div class="scroll"><table class="list"><thead><tr><th class="num">#</th><th>Token</th><th>Status</th>
 <th class="score">Score</th><th class="hide-sm">Product · Build · Team · Work · Integrity</th><th class="numcol">Mkt cap</th>
-<th class="hide-sm">Curve</th><th>Official</th></tr></thead><tbody>{rows}</tbody></table></div>"""
+<th class="numcol hide-sm">24h vol</th><th class="hide-sm">Curve</th><th>Official</th></tr></thead><tbody>{rows}</tbody></table></div>"""
 
 
 def scam_list(ts: list[dict], now: int, up: str = "", searchable: bool = False) -> str:
@@ -404,9 +456,11 @@ def token_page(t: dict, feed: dict) -> str:
                                   if tl.get("flagged_at") and t["launched_at"] and tl["flagged_at"] >= t["launched_at"] else "by the index"),
             "checking": f"Checked {plural(tl.get('checks') or 0, 'time')} so far",
             "unverified": "No claim after 72 hours"}[s]
-    keynums = [("Market cap", usd(m.get("mcap_usd"))), ("Price", price(m.get("price_usd"))), ("Curve", curve(t)),
+    act = t.get("activity") or {}
+    keynums = [("Market cap", usd(m.get("mcap_usd"))), ("Change", change(act)), ("24h volume", usd(act.get("vol_24h_usd"))),
+               ("24h buys / sells", trades(act)), ("Price", price(m.get("price_usd"))), ("Curve", curve(t)),
                (f"Real holders{f' ({hk})' if hk else ''}", "—" if h is None else str(h)),
-               ("Agent balance", usd(tr.get("balance_usdg")) if tr else "—"), ("Age", when(t["launched_at"]))]
+               ("Agent balance", usd(tr.get("balance_usdg")) if tr else "—")]
     badges = "".join(f'<span class="badge">{e(b.title())}</span>' for b in t.get("badges") or [] if b != "ORBIO AGENT")
     return f"""<div class="filepage"><p class="crumb"><a href="../index.html#live">← New launches</a></p>
 <article class="file v-{s}">
@@ -417,7 +471,7 @@ def token_page(t: dict, feed: dict) -> str:
 <div class="stampbox"><span class="stamp big v-{s}">{STATE[s]}</span><span class="stampnote">{e(note)}</span></div></header>
 <div class="actions">{"".join(actions)}</div>
 <dl class="keynums">{"".join(f"<div><dt>{e(k)}</dt><dd>{val}</dd></div>" for k, val in keynums)}</dl>
-{"" if agent else '<p class="muted small">Market numbers come from Orbio and cover Orbio agents only.</p>'}
+{chart(act)}{"" if agent else '<p class="muted small">Market numbers come from Orbio and cover Orbio agents only.</p>'}
 </article>
 {verdict_block(t, s)}
 <div class="cols">{project_block(t)}{score_block(t)}</div>
@@ -772,7 +826,14 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .card-nums{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0;padding:9px 0;border-block:1px dashed var(--rule)}
 .card-nums dt{font-size:11.5px;color:var(--muted)}.card-nums dd{margin:0;font:500 14px var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
 .card .why{margin:0;font-size:13.5px;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.rcpt{font-weight:600;white-space:nowrap}.real{margin:0;font-size:13.5px}
+.rcpt{font-weight:600;white-space:nowrap}
+.trend{display:flex;align-items:center;gap:12px}.trend .spark{flex:1;min-width:0}.trend .tv{font:500 12.5px var(--mono);text-align:right;white-space:nowrap;color:var(--muted)}
+.trend .tv b{display:block;font-weight:600;font-size:13.5px;color:var(--ink)}.trend .none{flex:1;font-size:12px;color:var(--muted)}
+.spark{display:block;width:100%;height:32px;overflow:visible}.spark .line{fill:none;stroke:var(--sk);stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linejoin:round}
+.spark .area{fill:var(--sk);opacity:.12}.spark.up{--sk:var(--ok)}.spark.down{--sk:var(--bad)}.up{color:var(--ok)}.down{color:var(--bad)}
+.chart{margin:16px 0 0;padding:14px 14px 10px;border:1px solid var(--rule);border-radius:10px;background:var(--sheet-2)}
+.chart .spark{height:96px}.chart figcaption{display:flex;justify-content:space-between;gap:8px 16px;flex-wrap:wrap;font:500 12.5px var(--mono);color:var(--muted);margin-top:8px}
+.keynums dd small{font-size:11px;color:var(--muted);font-weight:500}.real{margin:0;font-size:13.5px}
 .tok{display:inline-flex;align-items:baseline;gap:4px 6px;color:var(--ink);flex-wrap:wrap;min-width:0}.tok:hover{text-decoration:none}
 .tok b{font:700 17px var(--display);font-stretch:90%;letter-spacing:-.005em}.tok .no{font:500 12px var(--mono);color:var(--muted)}
 .tok .nm{color:var(--muted);font-size:13.5px}.tok.inline b{font-size:15px}.tok:hover b{text-decoration:underline}
@@ -822,7 +883,7 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .actions{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0 0}
 .btn{display:inline-flex;align-items:center;padding:8px 13px;border-radius:8px;border:1px solid var(--rule-2);background:var(--sheet);color:var(--ink);font:600 13.5px var(--sans);white-space:nowrap}
 .btn:hover{text-decoration:none;border-color:var(--ink-2)}.btn.primary{background:var(--ink);border-color:var(--ink);color:var(--sheet)}
-.keynums{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:10px;overflow:hidden;margin:18px 0 0}
+.keynums{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:10px;overflow:hidden;margin:18px 0 0}
 .keynums>div{background:var(--sheet-2);padding:11px 13px;min-width:0}
 .keynums dt{font-size:11.5px;color:var(--muted)}.keynums dd{margin:2px 0 0;font:600 16px var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .keynums.small{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}.keynums span{display:block;font-size:12px;color:var(--muted);margin-top:2px}
@@ -853,7 +914,7 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .prose pre{background:var(--sheet);border:1px solid var(--rule);border-radius:10px;padding:14px;overflow-x:auto}.prose pre code{background:none;padding:0}
 .prose .scroll{margin:14px 0}hr{border:0;border-top:1px solid var(--rule);margin:30px 0}
 .foot{border-top:1px solid var(--rule);background:var(--sheet)}.foot .wrap{padding-block:20px 40px;font-size:14px}.foot p{margin:4px 0}
-@media (max-width:900px){.keynums{grid-template-columns:repeat(3,minmax(0,1fr))}.cols{grid-template-columns:1fr}.how{grid-template-columns:1fr}}
+@media (max-width:900px){.cols{grid-template-columns:1fr}.how{grid-template-columns:1fr}}
 @media (max-width:560px){.keynums{grid-template-columns:repeat(2,minmax(0,1fr))}.hide-sm{display:none}.stampbox{flex-direction:row;padding:0}
 .stamp.big{font-size:20px;padding:11px 16px 9px}.verdict .why{font-size:17px}.file{padding:18px 16px}.verdict,.project,.score,.safety,.treasury,.evidence{padding:16px}
 .tally{gap:10px 24px}.tally dd{font-size:22px}}
@@ -1020,7 +1081,8 @@ def main() -> None:
     w.load_env()
     w.load_xlinks()
     t0 = time.time()
-    feed = p.export_data(p.open_db(), p.orbio_market())
+    db = p.open_db()
+    feed = p.export_data(db, *p.site_inputs(db))
     n = build(feed, args.out)
     print(f"built {n} token pages into {args.out} in {time.time() - t0:.1f}s")
     if args.single:
