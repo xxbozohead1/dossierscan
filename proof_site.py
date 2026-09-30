@@ -948,11 +948,11 @@ def ledger(d: dict, feed: dict) -> str:
         tr = d.get("treasury") or {}
         tok = next((t for t in feed["tokens"] if t["token"] == d["token"]), {})
         px = (tok.get("market") or {}).get("price_usd")
-        left = (tr.get("balance_usdg") or 0) - (d.get("compute_since_launch") or 0)
-        runway = f"{left / avg:.0f} days" if avg > 0 and left > 0 else "—"
+        left = d.get("key_available")  # what Dossier's key (the token's account) can still spend
+        runway = "—" if left is None or avg <= 0 else f"{left / avg:.1f} days" if left / avg < 10 else f"{left / avg:.0f} days"
         rev, burned = d.get("pass_revenue"), d.get("burned")
         rev_s = "—" if rev is None else num(rev, "$DOSSIER") + (f" <small>≈ {usd(rev * px)}</small>" if px and rev else "")
-        rows += [("AI balance credited by fees", usd(tr.get("balance_usdg"))), ("Checks paid since launch", f'{d.get("compute_since_launch") or 0:.2f} CREDIT'),
+        rows += [("AI balance credited by fees", usd(tr.get("balance_usdg"))), ("AI balance left for checks", usd(left)),
                  ("Compute runway, estimated", runway), ("ORBIO staked", num(tr.get("staked_orbio"), "ORBIO")),
                  ("CREDIT earned by the stake", f'{(tr.get("credit_owed") or 0) + (tr.get("credit_claimed") or 0):.2f}'),
                  ("Stake withdrawn (policy: never)", num(tr.get("withdrawn_orbio") or 0, "ORBIO")),
