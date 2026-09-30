@@ -219,7 +219,7 @@ FAVICON = ("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox
            "height='32' rx='8' fill='%230d1522'/%3E%3Cpath d='M9 16.5l4.5 4.5L23 11.5' stroke='%23fff' stroke-width='3.2' "
            "fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
 NAV = (("index.html#live", "New launches"), ("index.html#board", "Board"), ("scams.html", "Impersonators"),
-       ("method.html", "Method"), ("api.html", "API"))
+       ("token.html", "$DOSSIER"), ("method.html", "Method"), ("api.html", "API"))
 
 
 def header(up: str = "") -> str:
@@ -883,6 +883,89 @@ stake, CREDIT and the agent's spendable balance.</li>
 </article>"""
 
 
+# ----------------------------------------------------------------- $DOSSIER: the token page
+
+TOKEN_DOC = ROOT / "docs" / "token.md"
+FEE_SPLIT = ((45, "Dossier's compute", "AI balance: pays for every check", "c-compute"),
+             (50, "Staked as ORBIO", "earns CREDIT: compute first, then buybacks", "c-stake"),
+             (5, "Orbio's treasury", "the launchpad's share", "c-orbio"))
+PASS_SPLIT = ((70, "Burned", "sent to the dead address in batches", "c-burn"),
+              (30, "Treasury", "runs and grows Dossier", "c-treasury"))
+FLYWHEEL = (("Right, fast verdicts", "Each verdict links its receipt, often within minutes of launch."),
+            ("Hunters rely on it", "They check a launch before they buy. The keenest buy a pass."),
+            ("Fees and passes", "Trading pays creator fees. Passes are paid in $DOSSIER."),
+            ("More checks, less supply", "Fees buy faster, wider checks. Passes and stake rewards buy back and burn $DOSSIER."))
+BURN_SHARE = 0.7
+
+
+def split_bar(parts, label: str) -> str:
+    bar = "".join(f'<span class="{c}" style="width:{p}%" title="{p}%: {e(name)}"></span>' for p, name, _, c in parts)
+    legend = "".join(f'<li><i class="{c}"></i><b>{p}%</b> {e(name)}<span>{e(note)}</span></li>' for p, name, note, c in parts)
+    return f'<div class="split" role="img" aria-label="{e(label)}">{bar}</div><ul class="split-legend">{legend}</ul>'
+
+
+def official_contract(d: dict) -> str:
+    if not d.get("launched"):
+        return ('<div class="official"><p class="eyebrow">Official contract</p><p class="big">Not launched yet.</p>'
+                "<p>When $DOSSIER launches, its contract appears here. Until then, every token called $DOSSIER is an "
+                "impersonator, and afterwards so is any address that doesn't match this one.</p></div>")
+    t = d["token"]
+    return (f'<div class="official live"><p class="eyebrow">Official contract · Orbio agent #{e(d.get("agent"))}</p>'
+            f'<p class="ca"><code>{e(t)}</code><button type="button" class="copy" data-copy="{e(t)}">Copy</button></p>'
+            f'<p><a href="t/{e(t)}.html">Its Dossier file</a> · {link(f"https://www.orbio.so/launchpad/{t}", "Trade on Orbio")} · '
+            f'{link(f"{EXPLORER}/token/{t}", "Explorer")}</p><p class="muted small">Any other address using the name is an '
+            "impersonator.</p></div>")
+
+
+def flywheel() -> str:
+    steps = "".join(f"<li><b>{e(title)}</b><p>{e(text)}</p></li>" for title, text in FLYWHEEL)
+    return f'<ol class="flywheel">{steps}</ol><p class="loop">↻ and back to 1: more checks make better verdicts</p>'
+
+
+def ledger(d: dict, feed: dict) -> str:
+    days = d.get("compute_by_day") or []
+    week = days[-7:]
+    avg = (d.get("compute_7d") or 0) / len(week) if week else 0
+    top = max((c for _, c in days), default=0) or 1
+    bars = "".join(f'<span style="height:{max(3, 100 * c / top):.0f}%" title="{e(day)}: {c:.2f} CREDIT"></span>' for day, c in days)
+    axis = f'<div class="bars-axis"><span>{e(days[0][0][5:])}</span><span>{e(days[-1][0][5:])}</span></div>' if days else ""
+    rows = [("Checks, last 7 days", f'{d.get("compute_7d") or 0:.2f} CREDIT'), ("Per day, on average", f"{avg:.2f} CREDIT")]
+    if d.get("launched"):
+        tr = d.get("treasury") or {}
+        tok = next((t for t in feed["tokens"] if t["token"] == d["token"]), {})
+        px = (tok.get("market") or {}).get("price_usd")
+        left = (tr.get("balance_usdg") or 0) - (d.get("compute_since_launch") or 0)
+        runway = f"{left / avg:.0f} days" if avg > 0 and left > 0 else "—"
+        rev, burned = d.get("pass_revenue"), d.get("burned")
+        rev_s = "—" if rev is None else num(rev, "$DOSSIER") + (f" <small>≈ {usd(rev * px)}</small>" if px and rev else "")
+        rows += [("AI balance credited by fees", usd(tr.get("balance_usdg"))), ("Checks paid since launch", f'{d.get("compute_since_launch") or 0:.2f} CREDIT'),
+                 ("Compute runway, estimated", runway), ("ORBIO staked", num(tr.get("staked_orbio"), "ORBIO")),
+                 ("CREDIT earned by the stake", f'{(tr.get("credit_owed") or 0) + (tr.get("credit_claimed") or 0):.2f}'),
+                 ("ORBIO withdrawn for buybacks", num(tr.get("withdrawn_orbio") or 0, "ORBIO")),
+                 ("Pass revenue", rev_s), ("Burned (dead address)", "—" if burned is None else num(burned, "$DOSSIER"))]
+        due = (rev or 0) * BURN_SHARE - (burned or 0)
+        check = (f'<p class="behind">Burns are behind: {e(num(due, "$DOSSIER"))} of pass revenue still to burn.</p>' if rev and due > 0
+                 else '<p class="muted small">Burns cover at least 70% of pass revenue. Buyback burns count on top.</p>' if rev else "")
+    else:
+        rows += [(k, "—") for k in ("AI balance credited by fees", "Compute runway", "ORBIO staked", "CREDIT earned by the stake",
+                                    "Pass revenue", "Burned (dead address)")]
+        check = '<p class="muted small">The token\'s numbers start at launch. What the checks cost is live now.</p>'
+    cells = "".join(f"<div><dt>{e(k)}</dt><dd>{v}</dd></div>" for k, v in rows)
+    return (f'<div class="bars" role="img" aria-label="CREDIT spent on checks per day, last {len(days)} days">{bars}</div>{axis}'
+            f'<dl class="keynums small">{cells}</dl>{check}<p class="muted small">Updated every few minutes from Orbio\'s API, '
+            "the chain and the index's own records. A CREDIT is about a dollar of compute.</p>")
+
+
+def strategy_page(feed: dict) -> str:
+    d = feed.get("dossier") or {}
+    text = TOKEN_DOC.read_text("utf-8") if TOKEN_DOC.exists() else "# $DOSSIER\n\nComing soon."
+    blocks = {"contract": official_contract(d), "fees": split_bar(FEE_SPLIT, "Creator fees: 45% compute, 50% stake, 5% Orbio"),
+              "passes": split_bar(PASS_SPLIT, "Pass revenue: 70% burned, 30% treasury"), "flywheel": flywheel(),
+              "ledger": ledger(d, feed)}
+    body = re.sub(r"<p>@@(\w+)@@</p>", lambda m: blocks.get(m.group(1), ""), md(text))
+    return f'<article class="prose">{body}</article>'
+
+
 # ----------------------------------------------------------------- assets
 
 # light palette on :root; the dark one below is applied by the OS preference (unless the viewer chose light) and by
@@ -1038,6 +1121,28 @@ th[data-sort] button{all:unset;cursor:pointer;font:inherit;letter-spacing:inheri
 th[data-sort] button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] button::after{content:" ↑"}
 .keynums dd small,.card-nums dd small{font-size:11px;color:var(--muted);font-weight:500}
+.official{background:var(--sheet);border:1px solid var(--rule);border-left:4px solid var(--warn);border-radius:12px;padding:16px 18px;margin:20px 0}
+.official.live{border-left-color:var(--ok)}.official .eyebrow{margin-bottom:6px}.official p{margin:6px 0 0}
+.official .big{font:700 20px var(--display);font-stretch:92%;margin:0}
+.split{display:flex;height:14px;border-radius:7px;overflow:hidden;margin:16px 0 12px;background:var(--rule)}
+.split span{display:block;height:100%}.split span+span{border-left:2px solid var(--bg)}
+.c-compute{background:var(--ok)}.c-stake{background:var(--accent)}.c-orbio{background:var(--rule-2)}.c-burn{background:var(--bad)}
+.c-treasury{background:var(--accent)}
+.split-legend{list-style:none;padding:0;margin:0 0 8px;display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px 20px;font-size:14px}
+.split-legend li{max-width:none}.split-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:7px}
+.split-legend span{display:block;color:var(--muted);font-size:13px;margin-top:2px}
+.flywheel{list-style:none;padding:0;margin:18px 0 6px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:26px;counter-reset:fw}
+.flywheel li{position:relative;max-width:none;background:var(--sheet);border:1px solid var(--rule);border-radius:12px;padding:12px 14px;counter-increment:fw}
+.flywheel li::before{content:counter(fw);font:600 12px var(--mono);color:var(--muted)}
+.flywheel b{display:block;margin:3px 0 4px}.flywheel p{margin:0;font-size:13.5px;color:var(--ink-2)}
+.flywheel li:not(:last-child)::after{content:"→";position:absolute;right:-19px;top:50%;transform:translateY(-50%);color:var(--muted);font-weight:700}
+.loop{font:600 12.5px var(--mono);color:var(--muted);margin:0}
+.bars{display:flex;align-items:flex-end;gap:3px;height:60px;margin:14px 0 4px}
+.bars span{flex:1;background:var(--accent);border-radius:2px 2px 0 0;min-height:2px}
+.bars-axis{display:flex;justify-content:space-between;font:500 11.5px var(--mono);color:var(--muted)}
+.behind{color:var(--bad);font-weight:600}
+@media (max-width:900px){.flywheel{grid-template-columns:1fr;gap:24px}
+.flywheel li:not(:last-child)::after{content:"↓";right:auto;left:50%;top:auto;bottom:-21px;transform:translateX(-50%)}}
 @media (max-width:900px){.cols{grid-template-columns:1fr}.how{grid-template-columns:1fr}}
 @media (max-width:560px){.keynums{grid-template-columns:repeat(2,minmax(0,1fr))}.hide-sm{display:none}.stampbox{flex-direction:row;padding:0}
 .stamp.big{font-size:20px;padding:11px 16px 9px}.verdict .why{font-size:17px}.file{padding:18px 16px}.verdict,.project,.score,.safety,.treasury,.evidence{padding:16px}
@@ -1203,6 +1308,8 @@ def build(feed: dict, out: Path = OUT) -> int:
     put("scams.html", f"Impersonators caught · {NAME}", scams_page(feed))
     put("method.html", f"Method · {NAME}", method_page(), desc="How Dossier decides which tokens are real.")
     put("api.html", f"API · {NAME}", api_page(feed))
+    put("token.html", f"$DOSSIER · {NAME}", strategy_page(feed),
+        desc="How $DOSSIER's trading fees pay for Dossier's checks, and where passes, buybacks and burns go.")
     # served by the host for any address with no file (Cloudflare Pages would otherwise serve the home page)
     (tmp / "404.html").write_text(page(f"No file here · {NAME}", not_found_page(), feed, path=None, root="/"), "utf-8")
     if OG_IMAGE.exists():
@@ -1210,7 +1317,7 @@ def build(feed: dict, out: Path = OUT) -> int:
     site = site_url()
     (tmp / "robots.txt").write_text("User-agent: *\nAllow: /\n" + (f"Sitemap: {site}/sitemap.xml\n" if site else ""), "utf-8")
     if site:
-        pages = ["", "agents.html", "scams.html", "method.html", "api.html"] + [f't/{t["token"]}.html' for t in feed["tokens"]]
+        pages = ["", "agents.html", "scams.html", "token.html", "method.html", "api.html"] + [f't/{t["token"]}.html' for t in feed["tokens"]]
         (tmp / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
                                          + "".join(f"<url><loc>{e(site)}/{p}</loc></url>\n" for p in pages) + "</urlset>\n", "utf-8")
     for t in feed["tokens"]:
@@ -1260,6 +1367,7 @@ def to_hash(s: str) -> str:
                      (r'href="(?:\.\./)?index\.html"', 'href="#home"'),
                      (r'href="(?:\.\./)?agents\.html"', 'href="#agents"'),
                      (r'href="(?:\.\./)?scams\.html"', 'href="#all-scams"'),
+                     (r'href="(?:\.\./)?token\.html"', 'href="#token"'),
                      (r'href="(?:\.\./)?method\.html#([\w-]+)"', r'href="#\1"'),
                      (r'href="(?:\.\./)?method\.html"', 'href="#method"'),
                      (r'href="(?:\.\./)?api\.html"', 'href="#api"'),
@@ -1281,6 +1389,7 @@ def build_single(feed: dict, name: str = NAME) -> str:
         views = [("home", f"{name}: which Orbio launch is the real one?", home(feed)),
                  ("agents", f"Every Orbio agent · {name}", agents_page(feed)),
                  ("all-scams", f"Impersonators caught · {name}", scams_page(feed)),
+                 ("token", f"$DOSSIER · {name}", strategy_page(feed)),
                  ("method", f"Method · {name}", method_page()),
                  ("api", f"API · {name}", api_page(feed))]
         views += [(f't-{t["token"]}', f'${t["symbol"]}: {STATE[state_of(t, now)]} · {name}', token_page(t, feed))
