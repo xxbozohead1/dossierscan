@@ -182,7 +182,7 @@ def tref(t: dict, up: str = "", cls: str = "tok") -> str:
     """A link to the token's file, or to the explorer for a token the index has no file on (a contract a project
     posted that the index never read)."""
     agent = f' <span class="no">#{t["orbio_agent"]}</span>' if t.get("orbio_agent") else ""
-    inner = f'<b>${e(t["symbol"] or short(t["token"]))}</b>{agent} <span class="nm">{e(t.get("name") or "")}</span>'
+    inner = f'<b>${e(t["symbol"] or short(t["token"]))}</b>{agent}' + (f' <span class="nm">{e(t["name"])}</span>' if t.get("name") else "")
     if ON_FILE and t["token"] not in ON_FILE:
         return f'<a class="{cls}" href="{EXPLORER}/token/{e(t["token"])}" rel="nofollow noopener" target="_blank">{inner}</a>'
     return f'<a class="{cls}" href="{up}t/{t["token"]}.html">{inner}</a>'
@@ -701,7 +701,9 @@ def trader_rows(t: dict, now: int) -> list[tuple[str, str, str]]:
         f = tk["first"]
         gap = fmt_span((t["launched_at"] or 0) - (f["ts"] or 0))
         rows.append(("Original or copy", "ok" if s == "verified" else "warn",
-                     f"{ordinal(tk['rank'])} token named ${sym}. The first, {tref(f, '../', 'tok inline')}, launched {e(gap)} earlier. "
+                     f"{ordinal(tk['rank'])} token named ${sym}. The first, "
+                     f"{tref({'token': f['token'], 'symbol': f['symbol'], 'orbio_agent': f.get('vault_id')}, '../', 'tok inline')}, "
+                     f"launched {e(gap)} earlier. "
                      + ("The project's own channels confirm this one." if s == "verified" else "Check which one the project claims.")))
     dev = tc.get("dev") or {}
     if dev:
@@ -710,11 +712,12 @@ def trader_rows(t: dict, now: int) -> list[tuple[str, str, str]]:
                      "This wallet launched nothing else within a week of this one" if n == 0
                      else f"This wallet launched {plural(n, 'other token')} within a week of this one"))
         if dev["other_launches"]:
-            walked = dev["walked_away"]
-            rows.append(("Creator", "bad" if walked else "ok",
-                         f"Of its {plural(dev['other_launches'], 'other launch')}, it sold out of {walked}"
-                         + (f", {dev['graduated']} graduated" if dev["graduated"] else "")
-                         + (f", {dev['impersonators']} were impersonators" if dev["impersonators"] else "")))
+            n_o, walked, fakes = dev["other_launches"], dev["walked_away"], dev["impersonators"]
+            launches = f"{n_o} other launch{'' if n_o == 1 else 'es'}"
+            extra = ([f"{dev['graduated']} graduated"] if dev["graduated"] else []) +                 ([f"{fakes} {'was an impersonator' if fakes == 1 else 'were impersonators'}"] if fakes else [])
+            rows.append(("Creator", "bad" if walked or fakes else "ok",
+                         (f"It sold out of {walked} of its {launches}" if walked else f"It hasn't sold out of any of its {launches}")
+                         + ("; " + ", ".join(extra) if extra else "")))
         if dev.get("first_seen"):
             age = (t["launched_at"] or now) - dev["first_seen"]
             when_ = dt.datetime.fromtimestamp(dev["first_seen"], dt.timezone.utc).strftime("%d %b %Y")
@@ -742,7 +745,8 @@ def trader_rows(t: dict, now: int) -> list[tuple[str, str, str]]:
     top10 = next((f for f in t.get("facts") or [] if f["line"] == "top10"), None)
     if top10 and isinstance(top10.get("top10_share"), (int, float)):
         sh = top10["top10_share"]
-        rows.append(("Holders", "ok" if sh < .3 else "warn" if sh < .5 else "bad", f"Top 10 holders own {sh:.0%}"))
+        rows.append(("Holders", "ok" if sh < .3 else "warn" if sh < .5 else "bad",
+                     f"Top 10 holders own {sh:.0%}" if sh >= .01 else "Top 10 holders own under 1%"))
     h = [(k, v) for k, v in (t.get("holders") or {}).items() if v is not None]
     if h:
         grew = len(h) < 2 or h[-1][1] >= h[0][1]
