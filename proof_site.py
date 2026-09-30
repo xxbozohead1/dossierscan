@@ -480,6 +480,48 @@ def map_notes(t: dict, now: int) -> list[list[str]]:
     return (head + rest)[:4]
 
 
+def orb_defs() -> str:
+    """The launch map's paint: per verdict, a glass body (lit top left, bright at the rim), light pooling at the bottom
+    and a glow; one highlight and one backdrop for all. Stops take the verdict's colour from their gradient's v-* class.
+    The rules that pick a gradient by verdict sit in the page (not the stylesheet), so url(#…) means this document,
+    and a verdict that changes live repaints on its own."""
+    grads, rules = [], []
+    for k in STATE:
+        grads.append(f'<radialGradient id="orb-{k}" class="v-{k}" fx=".34" fy=".28"><stop offset="0" stop-opacity=".62"/>'
+                     '<stop offset=".4" stop-opacity=".2"/><stop offset=".74" stop-opacity=".1"/><stop offset=".92" '
+                     'stop-opacity=".5"/><stop offset="1" stop-opacity=".95"/></radialGradient>'
+                     f'<radialGradient id="cau-{k}" class="v-{k}" cx=".56" cy=".86" r=".5"><stop offset="0" stop-opacity=".6"/>'
+                     '<stop offset="1" stop-opacity="0"/></radialGradient>'
+                     f'<radialGradient id="glow-{k}" class="v-{k}"><stop offset=".72" stop-opacity="0"/><stop offset=".77" '
+                     'stop-opacity=".5"/><stop offset="1" stop-opacity="0"/></radialGradient>')
+        rules.append(f".lmap .v-{k}>.skin{{fill:url(#orb-{k})}}.lmap .v-{k}>.cau{{fill:url(#cau-{k})}}"
+                     f".lmap .v-{k}>.glow{{fill:url(#glow-{k})}}")
+    grads.append('<linearGradient id="orb-spec" x2="0" y2="1"><stop class="w" offset="0" stop-opacity=".85"/>'
+                 '<stop class="w" offset="1" stop-opacity="0"/></linearGradient>'
+                 '<radialGradient id="orb-aura"><stop class="a" offset="0" stop-opacity=".13"/><stop class="a" offset=".6" '
+                 'stop-opacity=".05"/><stop class="a" offset="1" stop-opacity="0"/></radialGradient>'
+                 '<radialGradient id="orb-field"><stop class="i" offset=".55" stop-opacity="0"/><stop class="i" offset="1" '
+                 'stop-opacity=".07"/></radialGradient>')
+    rules.append(".lmap .spec{fill:url(#orb-spec)}.lmap .aura{fill:url(#orb-aura)}.lmap .fam circle{fill:url(#orb-field)}")
+    return f'<defs>{"".join(grads)}</defs><style>{"".join(rules)}</style>'
+
+
+def orb(x: float, y: float, r: float) -> str:
+    """One bubble's sphere: glow, body, glass, pooled light, a globe grid on the bigger ones (it turns while pointed
+    at), and the highlight. Only the body takes the pointer."""
+    c = f'cx="{x:.1f}" cy="{y:.1f}"'
+    grid = ""
+    if r >= 17:
+        grid = (f'<g class="grid" transform="rotate(-18 {x:.1f} {y:.1f})"><ellipse {c} rx="{r * .97:.1f}" ry="{r * .3:.1f}"/>'
+                f'<ellipse class="mer" {c} rx="{r * .97:.1f}" ry="{r * .97:.1f}"/>'
+                f'<ellipse class="mer b" {c} rx="{r * .97:.1f}" ry="{r * .97:.1f}"/></g>')
+    sx, sy = x - r * .24, y - r * .5
+    return (f'<circle class="glow" {c} r="{r * 1.3:.1f}"/><circle class="ret" {c} r="{r * 1.17 + 1.5:.1f}"/>'
+            f'<circle class="core" {c} r="{r:.1f}"/><circle class="skin" {c} r="{r:.1f}"/><circle class="cau" {c} r="{r:.1f}"/>{grid}'
+            f'<ellipse class="spec" cx="{sx:.1f}" cy="{sy:.1f}" rx="{r * .44:.1f}" ry="{r * .22:.1f}" transform="rotate(-28 {sx:.1f} {sy:.1f})"/>'
+            f'<circle class="glint" cx="{x - r * .5:.1f}" cy="{y - r * .36:.1f}" r="{max(.8, r * .06):.1f}"/>')
+
+
 def launch_map(ts: list[dict], now: int) -> str:
     """Every launch of the last 48 hours as a bubble: sized by market cap, coloured by verdict, and tokens sharing a
     ticker packed inside one ring, so the real one (or the lack of one) shows among its copies at a glance. The page
@@ -539,12 +581,13 @@ def launch_map(ts: list[dict], now: int) -> str:
                                                         ("o", tk.get("rank") if (tk.get("total") or 0) > 1 else None)) if v}
             out.append(f'<a class="bub v-{s}" href="t/{t["token"]}.html" data-t="{t["token"]}"{fam} '
                        f'data-state="{"checking" if s == "unverified" else s}"><title>{e(tip)}</title>'
-                       f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r:.1f}"/>{label}</a>')
+                       f'{orb(x, y, r)}{label}</a>')
     # every launch in the last 48 hours is still being checked if nobody has claimed it, so "no claim" never shows here
     legend = "".join(f'<button type="button" class="v-{k}" data-filter="{k}" aria-pressed="false"><i></i>{label}</button>'
                      for k, label in (("verified", "Verified"), ("scam", "Impersonator"), ("checking", "Checking")))
+    aura = f'<circle class="aura" cx="{w / 2:.1f}" cy="{h / 2:.1f}" r="{max(w, h) * .62:.1f}"/>'
     return (f'<figure class="lmapbox"><svg class="lmap" viewBox="0 0 {w:.0f} {h:.0f}" role="group" '
-            f'aria-label="Map of the last 48 hours of Orbio launches, by verdict">{"".join(out + labels)}</svg>'
+            f'aria-label="Map of the last 48 hours of Orbio launches, by verdict">{orb_defs()}{aura}{"".join(out + labels)}</svg>'
             f'<figcaption class="maplegend">{legend}<span class="muted">Size: market cap · a ring holds the tokens '
             'sharing a ticker · a pulse: launched in the last hour · <span class="on-hover">point at a bubble for its '
             'numbers, click for its file</span><span class="on-touch">tap a bubble for its numbers, tap again for its file'
@@ -1380,11 +1423,30 @@ th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] bu
 .keynums dd small,.card-nums dd small{font-size:11px;color:var(--muted);font-weight:500}
 .official-ca{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}.official-ca code{word-break:break-all}
 .lmapbox{margin:4px 0 18px}.lmap{display:block;width:100%;max-width:700px;height:auto;margin:0 auto}
-.lmap .bub{transition:opacity .15s}.lmap .bub:focus{outline:none}
-.lmap .bub circle{fill:var(--st-bg);stroke:var(--st);stroke-width:2;transition:stroke-width .15s}
-.lmap .bub:hover circle,.lmap .bub:focus-visible circle,.lmap .bub.cur circle{stroke-width:4}
+.lmap .bub{transition:opacity .15s,transform .2s;transform-box:fill-box;transform-origin:center}.lmap .bub:focus{outline:none}
+.lmap .bub:hover,.lmap .bub:focus-visible,.lmap .bub.cur{transform:scale(1.07)}
 .lmap .bub.dim{opacity:.16;pointer-events:none}.lmap.famfocus .bub:not(.hl):not(.dim){opacity:.28}
-.lmap .bub text{fill:var(--st);font-family:var(--mono);font-weight:600;text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.lmap .bub>*{pointer-events:none}.lmap .bub>.core{pointer-events:auto}
+.lmap .core{fill:var(--st-bg);stroke:var(--st);stroke-width:1;stroke-opacity:.9;transition:stroke-width .15s}
+.lmap .bub:hover .core,.lmap .bub:focus-visible .core,.lmap .bub.cur .core{stroke-width:2.2}
+.lmap .glow{opacity:.8;transition:opacity .2s}.lmap .bub:hover .glow,.lmap .bub.cur .glow,.lmap .bub.hl .glow{opacity:1}
+.lmap .aura{pointer-events:none}
+.lmap stop{stop-color:var(--st)}.lmap stop.w{stop-color:#fff}.lmap stop.a{stop-color:var(--accent)}.lmap stop.i{stop-color:var(--ink)}
+.lmap .grid ellipse{fill:none;stroke:var(--st);stroke-width:.7;opacity:.3;transition:opacity .2s}
+.lmap .grid .mer{transform-box:fill-box;transform-origin:center;transform:scaleX(.45)}.lmap .grid .mer.b{opacity:0}
+.lmap .bub:hover .grid ellipse,.lmap .bub.cur .grid ellipse{opacity:.6}
+.lmap .bub:hover .mer,.lmap .bub.cur .mer{animation:spin 2.6s linear infinite}.lmap .bub:hover .mer.b,.lmap .bub.cur .mer.b{animation-delay:-.65s}
+@keyframes spin{0%{transform:scaleX(1)}12.5%{transform:scaleX(.71)}25%{transform:scaleX(0)}37.5%{transform:scaleX(-.71)}50%{transform:scaleX(-1)}
+62.5%{transform:scaleX(-.71)}75%{transform:scaleX(0)}87.5%{transform:scaleX(.71)}100%{transform:scaleX(1)}}
+@media (prefers-reduced-motion:reduce){.lmap .bub:hover .mer,.lmap .bub.cur .mer{animation:none}.lmap .bub{transition:opacity .15s}}
+.lmap .glint{fill:#fff;opacity:.9}
+.lmap .ret{fill:none;stroke:var(--st);stroke-width:1.2;stroke-dasharray:10 5 2 5;opacity:0;transform-box:fill-box;transform-origin:center;transition:opacity .2s}
+.lmap .bub:hover .ret,.lmap .bub:focus-visible .ret,.lmap .bub.cur .ret{opacity:.85;animation:ret 6s linear infinite}
+@keyframes ret{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.lmap .bub:hover .ret,.lmap .bub.cur .ret{animation:none}}
+.lmap .bub,.lmap .bub:hover{text-decoration:none}
+.lmap .bub text{fill:var(--ink);font-family:var(--mono);font-weight:600;text-anchor:middle;dominant-baseline:central;
+  paint-order:stroke;stroke:var(--st-bg);stroke-width:2.5px;stroke-linejoin:round;stroke-opacity:.7}
 .lmap .bub .halo{fill:none;stroke:var(--st);stroke-width:2;opacity:0;pointer-events:none;transform-box:fill-box;transform-origin:center}
 .lmap .bub.fresh .halo{animation:halo 2.4s ease-out infinite}
 @keyframes halo{0%{opacity:.75;transform:scale(1)}80%,100%{opacity:0;transform:scale(1.7)}}
@@ -1400,7 +1462,9 @@ th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] bu
 .maplegend button{display:inline-flex;align-items:center;gap:6px;font:500 12.5px var(--sans);color:var(--ink);background:none;border:1px solid transparent;border-radius:999px;padding:3px 9px;cursor:pointer;transition:opacity .15s,border-color .15s}
 .maplegend button:hover{border-color:var(--rule-2)}.maplegend button[aria-pressed=true]{border-color:var(--st);background:var(--st-bg)}
 .maplegend.filtering button:not([aria-pressed=true]){opacity:.5}
-.maplegend i{width:10px;height:10px;border-radius:50%;background:var(--st-bg);border:2px solid var(--st)}
+.maplegend i{width:12px;height:12px;border-radius:50%;box-shadow:0 0 6px var(--st);
+  background:radial-gradient(circle at 34% 28%,rgba(255,255,255,.85) 0 13%,transparent 16%),
+  radial-gradient(circle at 40% 35%,transparent 15%,rgba(0,0,0,.5) 100%) var(--st)}
 .maplegend>.muted{flex-basis:100%;text-align:center}
 .on-touch{display:none}@media (hover:none){.on-hover{display:none}.on-touch{display:inline}}
 .mapcard{position:absolute;z-index:40;width:292px;max-width:calc(100vw - 16px);background:var(--sheet);border:1px solid var(--rule-2);border-radius:12px;box-shadow:0 14px 36px rgba(8,14,26,.3);padding:12px 14px;font-size:13.5px;pointer-events:none;opacity:0;transform:translateY(3px);transition:opacity .12s,transform .12s}
@@ -1572,7 +1636,7 @@ JS = r"""
     MAP.querySelectorAll('.bub').forEach(function(b){var t=b.querySelector('title');if(t){b.setAttribute('aria-label',t.textContent);t.remove()}})}
   function bubble(b,r){if(!r.s)return;for(var v in LABEL)b.classList.toggle('v-'+v,v===r.s);b.dataset.state=r.s==='unverified'?'checking':r.s;
     var fresh=now()-(r.lt||0)<3600;b.classList.toggle('fresh',fresh);
-    if(fresh&&!b.querySelector('.halo')){var c=b.querySelector('circle'),h=c.cloneNode(false);h.setAttribute('class','halo');b.insertBefore(h,c)}}
+    if(fresh&&!b.querySelector('.halo')){var c=b.querySelector('.core'),h=c.cloneNode(false);h.setAttribute('class','halo');b.insertBefore(h,c)}}
   function ord(n){var v=n%100;return n+(v>=10&&v<=20?'th':{1:'st',2:'nd',3:'rd'}[n%10]||'th')}
   function mapTarget(n){var el=n&&n.closest?n.closest('.bub,.famlabel,.fam'):null;return el&&MAP.contains(el)&&!el.classList.contains('dim')?el:null}
   function closeBtn(){return mcPinned?'<button type="button" class="x" aria-label="Close">×</button>':''}
@@ -1604,7 +1668,7 @@ JS = r"""
   function light(f){MAP.classList.toggle('famfocus',f!=null);
     MAP.querySelectorAll('[data-f]').forEach(function(x){x.classList.toggle(x.classList.contains('bub')?'hl':'on',f!=null&&x.dataset.f===f)})}
   function anchor(el){var ring=el.classList.contains('famlabel')?MAP.querySelector('.fam[data-f="'+el.dataset.f+'"]'):el;
-    return (ring||el).querySelector('circle')||el}
+    return (ring||el).querySelector('.core,.fam>circle')||el}
   function placeCard(){if(!mc||!mcFor)return;var a=anchor(mcFor).getBoundingClientRect(),vw=document.documentElement.clientWidth,
     vh=window.innerHeight,w=mc.offsetWidth,h=mc.offsetHeight,g=10,x,y;
     if(vw<600){x=(vw-w)/2;y=a.bottom+g+h<=vh-8||a.top-g-h<8?a.bottom+g:a.top-g-h}  // a phone: under the bubble, or over it
@@ -1623,7 +1687,7 @@ JS = r"""
   function hideCard(){clearTimeout(mcT);if(!mc)return;mc.classList.remove('on','pinned');mcPinned=false;
     if(mcFor)mcFor.classList.remove('cur');mcFor=null;light(null)}
   function nearest(cx,cy,px){var best=null,bd=px;  // a phone shows the map at half size: a tap near a small bubble picks it
-    MAP.querySelectorAll('.bub:not(.dim)').forEach(function(b){var r=b.querySelector('circle').getBoundingClientRect(),
+    MAP.querySelectorAll('.bub:not(.dim)').forEach(function(b){var r=b.querySelector('.core').getBoundingClientRect(),
       d=Math.hypot(cx-r.left-r.width/2,cy-r.top-r.height/2)-r.width/2;if(d<bd){bd=d;best=b}});return best}
   if(MAP){
     document.addEventListener('pointerdown',function(ev){ptr=ev.pointerType||'mouse'},true);
