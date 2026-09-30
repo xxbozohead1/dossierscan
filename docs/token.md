@@ -34,8 +34,9 @@ More fees buy more checking:
 
 ## Passes
 
-The website stays free. The Dossier bot sells a pass: unlimited lookups, a fresh re-check on demand, and a message
-the moment a watched token's verdict lands. Passes are priced in dollars and paid in $DOSSIER at the live price.
+The website stays free. The Dossier bot, opening soon on Telegram, will sell a pass: unlimited lookups, a fresh
+re-check on demand, and a message the moment a watched token's verdict lands. Passes will be priced in dollars and
+paid in $DOSSIER at the live price.
 
 @@passes@@
 
