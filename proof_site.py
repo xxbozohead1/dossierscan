@@ -469,6 +469,10 @@ def card(t: dict, now: int, up: str = "") -> str:
     rc = t["verdict"]["receipts"][:1]
     real = [x for x in ((t.get("related") or {}).get("claimed") or []) if x["token"] != t["token"]]
     extra = f'<p class="real">Real token: {tref(real[0], up, "tok inline")}</p>' if s == "scam" and real else ""
+    tk = (t.get("trader") or {}).get("ticker")
+    if tk and tk["rank"] > 1 and s != "verified":  # not the first token with this ticker: say so where hunters scan
+        extra += (f'<p class="copynote">{ordinal(tk["rank"])} ${e(t["symbol"] or "?")}: the first launched '
+                  f'{e(fmt_span((t["launched_at"] or 0) - (tk["first"]["ts"] or 0)))} earlier</p>')
     return f"""<li class="card" data-t="{t["token"]}" data-lt="{t["launched_at"] or 0}" data-state="{"checking" if s == "unverified" else s}">
 <div class="card-top"><span class="fileno">{fileno(t)}</span><span class="age">{when(t["launched_at"])}</span>{tools(t["token"])}</div>
 <div class="card-title">{tref(t, up, "tok stretch")}<span data-l="chip">{chip(s)}</span></div>
@@ -602,7 +606,7 @@ def token_page(t: dict, feed: dict) -> str:
 </article>
 {verdict_block(t, s)}
 <div class="cols">{project_block(t)}{score_block(t)}</div>
-{safety_block(t)}
+{trader_block(t, now)}
 {treasury_block(t) if tr else ""}
 {identities(t)}
 {evidence(t) if t.get("facts") else ""}
@@ -678,29 +682,89 @@ def score_block(t: dict) -> str:
 {bars(sc, labels=True) if sc else ""}{f'<p class="muted small">Capped by {e(t["cap"])}.</p>' if t.get("cap") else ""}</section>"""
 
 
-def safety_block(t: dict) -> str:
-    ca = t.get("creator_activity") or {}
-    top10 = next((f for f in t.get("facts") or [] if f["line"] == "top10"), None)
-    items = []
-    if ca.get("launches_48h"):
-        n = ca["launches_48h"]
-        items.append(("ok" if n <= 1 else "warn" if n < 3 else "bad",
-                      "Only launch by this wallet around this time" if n <= 1 else f"This wallet launched {n} tokens within a day of this one"))
+def ordinal(n: int) -> str:
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
+COVERED_FLAGS = {"LAUNCH_BUNDLE", "CREATOR_EXIT", "SERIAL"}  # the trader's card says these in its own words
+
+
+def trader_rows(t: dict, now: int) -> list[tuple[str, str, str]]:
+    """(group, ok|warn|bad, html) for the trader's card. Launcher-written text is escaped here."""
+    tc, ca, s = t.get("trader") or {}, t.get("creator_activity") or {}, state_of(t, now)
+    sym, rows = e(t["symbol"] or "?"), []
+    tk = tc.get("ticker")
+    if tk and tk["rank"] == 1:
+        rows.append(("Original or copy", "ok", f"First token named ${sym}"
+                     + (f". {plural(tk['later'], 'later token')} reused the ticker" if tk["later"] else "")))
+    elif tk:
+        f = tk["first"]
+        gap = fmt_span((t["launched_at"] or 0) - (f["ts"] or 0))
+        rows.append(("Original or copy", "ok" if s == "verified" else "warn",
+                     f"{ordinal(tk['rank'])} token named ${sym}. The first, {tref(f, '../', 'tok inline')}, launched {e(gap)} earlier. "
+                     + ("The project's own channels confirm this one." if s == "verified" else "Check which one the project claims.")))
+    dev = tc.get("dev") or {}
+    if dev:
+        n = dev["launches_week"]
+        rows.append(("Creator", "ok" if n == 0 else "warn" if n < 3 else "bad",
+                     "This wallet launched nothing else within a week of this one" if n == 0
+                     else f"This wallet launched {plural(n, 'other token')} within a week of this one"))
+        if dev["other_launches"]:
+            walked = dev["walked_away"]
+            rows.append(("Creator", "bad" if walked else "ok",
+                         f"Of its {plural(dev['other_launches'], 'other launch')}, it sold out of {walked}"
+                         + (f", {dev['graduated']} graduated" if dev["graduated"] else "")
+                         + (f", {dev['impersonators']} were impersonators" if dev["impersonators"] else "")))
+        if dev.get("first_seen"):
+            age = (t["launched_at"] or now) - dev["first_seen"]
+            when_ = dt.datetime.fromtimestamp(dev["first_seen"], dt.timezone.utc).strftime("%d %b %Y")
+            rows.append(("Creator", "ok" if age >= 90 * DAY else "warn",
+                         f"Wallet active since {when_}" if age >= 90 * DAY else f"New wallet: first active {when_}"))
     if ca.get("bought"):
         sp = ca.get("sold_pct") or 0
-        items.append(("bad" if sp >= 50 else "warn" if sp else "ok",
-                      f"Creator bought {num(ca['bought'])} at launch and has sold {sp}% of it"))
+        rows.append(("Creator", "bad" if sp >= 50 else "warn" if sp else "ok",
+                     f"Bought {num(ca['bought'])} at launch and has sold {sp}% of it"))
     elif ca:
-        items.append(("ok", "Creator didn't buy at launch"))
+        rows.append(("Creator", "ok", "Didn't buy at launch"))
+    ln = tc.get("launch") or {}
+    lb = ln.get("launch_block_buyers")
+    if lb is not None:
+        rows.append(("Launch", "bad" if lb >= 3 else "warn" if lb else "ok",
+                     "Nobody bought in the launch block itself" if not lb
+                     else f"{plural(lb, 'buyer')} in the launch block itself" + (": a bundled launch" if lb >= 3 else "")))
+    if "snipers" in ln:
+        n, pct, sold, bots_ = ln["snipers"], ln.get("sniped_pct") or 0, ln.get("snipers_sold") or 0, ln.get("sniper_bots") or 0
+        rows.append(("Launch", "ok" if not n or pct < 10 else "warn" if pct < 25 else "bad",
+                     f"Nobody bought in the first {ln.get('window_s', 10)} seconds" if not n else
+                     f"{plural(n, 'wallet')} took {pct:g}% of the supply in the first {ln.get('window_s', 10)} seconds"
+                     + (f" ({bots_} of them bots that buy most launches)" if bots_ else "")
+                     + (f". {sold} had sold or moved it within 30 minutes" if sold else ". None had sold within 30 minutes")))
+    top10 = next((f for f in t.get("facts") or [] if f["line"] == "top10"), None)
     if top10 and isinstance(top10.get("top10_share"), (int, float)):
         sh = top10["top10_share"]
-        items.append(("ok" if sh < .3 else "warn" if sh < .5 else "bad", f"Top 10 holders own {sh:.0%}"))
-    items += [("bad", FLAGS[f]) for f in t.get("flags") or [] if f in FLAGS]
-    if not items:
+        rows.append(("Holders", "ok" if sh < .3 else "warn" if sh < .5 else "bad", f"Top 10 holders own {sh:.0%}"))
+    h = [(k, v) for k, v in (t.get("holders") or {}).items() if v is not None]
+    if h:
+        grew = len(h) < 2 or h[-1][1] >= h[0][1]
+        label = {"30m": "30 min", "6h": "6 h", "24h": "a day", "7d": "a week"}
+        rows.append(("Holders", "ok" if grew else "warn",
+                     "Real holders: " + ", ".join(f"{v} after {label[k]}" for k, v in h)))
+    rows += [("Warnings", "bad", e(FLAGS[f])) for f in t.get("flags") or [] if f in FLAGS and f not in COVERED_FLAGS]
+    return rows
+
+
+def trader_block(t: dict, now: int) -> str:
+    rows = trader_rows(t, now)
+    if not rows:
         return ""
-    return ('<section class="safety"><h2>Creator and safety</h2><ul class="checks">'
-            + "".join(f'<li class="{c}">{e(txt)}</li>' for c, txt in items)
-            + '</ul><p class="muted small">Holder counts are real end buyers, not routers or bots.</p></section>')
+    groups: dict[str, list] = {}
+    for g, c, txt in rows:
+        groups.setdefault(g, []).append((c, txt))
+    body = "".join(f'<h3>{e(g)}</h3><ul class="checks">' + "".join(f'<li class="{c}">{txt}</li>' for c, txt in items) + "</ul>"
+                   for g, items in groups.items())
+    return (f'<section class="safety trader"><h2>Trader’s card</h2>{body}<p class="muted small">From the chain alone: '
+            "holder counts are real end buyers, not routers or bots, and bots are wallets that buy 10 or more launches a day."
+            "</p></section>")
 
 
 def treasury_block(t: dict) -> str:
@@ -1141,6 +1205,8 @@ th[data-sort] button:focus-visible{outline:2px solid var(--accent);outline-offse
 th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] button::after{content:" ↑"}
 .keynums dd small,.card-nums dd small{font-size:11px;color:var(--muted);font-weight:500}
 .official-ca{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}.official-ca code{word-break:break-all}
+.trader h3{margin:16px 0 6px;font:600 11.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}.trader h3:first-of-type{margin-top:8px}
+.copynote{margin:0;font-size:13px;color:var(--warn);font-weight:600}
 .token-hero{display:flex;align-items:center;gap:18px;margin-bottom:6px}.token-hero h1{margin:0}
 .token-hero img{width:104px;height:104px;border-radius:50%;flex:none;box-shadow:0 6px 24px rgba(8,14,26,.25)}
 .official{background:var(--sheet);border:1px solid var(--rule);border-left:4px solid var(--warn);border-radius:12px;padding:16px 18px;margin:20px 0}
