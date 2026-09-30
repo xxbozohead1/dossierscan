@@ -458,7 +458,7 @@ the real token when the project has launched one.</p></div></div>
 <section id="how"><h2>How {NAME} decides</h2><div class="how">
 <div>{chip("verified")}<p>{STATE_TEXT["verified"]} Social links in the token's metadata count for nothing: anyone can copy them.</p></div>
 <div>{chip("scam")}<p>{STATE_TEXT["scam"]} The page quotes the post or names the contract the project claims instead.</p></div>
-<div>{chip("checking")}<p>No official channel lists this contract yet. For the first two hours after launch, {NAME} looks for the
+<div>{chip("checking")}<p>No official channel lists this contract yet. For the first six hours after launch, {NAME} looks for the
 project's post every minute.</p></div>
 </div><p class="more"><a href="method.html">The full method →</a></p></section>
 </div>"""

@@ -22,9 +22,9 @@ Every trade of an Orbio launch pays a creator fee. Orbio's contracts split it th
 
 ## What the compute pays for
 
-Dossier opens a file on every agent launched on Orbio. In a launch's first two hours it looks for the project's
-official post every minute. After that it re-checks at set intervals for three days, and keeps scoring what the
-project ships. Each check reads the project's X account and website and asks one question: do they list this exact
+Dossier opens a file on every agent launched on Orbio. In a launch's first six hours it looks for the project's
+official post every minute. After that it re-checks at set intervals for three days, refreshes the whole file daily
+for the first week, and keeps scoring what the project ships. Each check reads the project's X account and website and asks one question: do they list this exact
 contract? Every one of those reads is a paid call, and the ledger below shows what they cost each day.
 
 More fees buy more checking:
