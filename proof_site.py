@@ -821,8 +821,6 @@ def token_page(t: dict, feed: dict) -> str:
                                   if tl.get("flagged_at") and t["launched_at"] and tl["flagged_at"] >= t["launched_at"] else "by the index"),
             "checking": f"Checked {plural(tl.get('checks') or 0, 'time')} so far",
             "unverified": "No claim after 72 hours"}[s]
-    keynums = [("Market cap", "mcap"), ("Change", "change"), ("24h volume", "vol"), ("24h buys / sells", "trades"),
-               ("Price", "price"), ("Curve", "curve"), ("Real holders", "holders"), ("Agent balance", "tr_bal")]
     badges = "".join(f'<span class="badge">{e(b.title())}</span>' for b in t.get("badges") or [] if b != "ORBIO AGENT")
     return f"""<div class="filepage" data-t="{addr}"><p class="crumb"><a href="../index.html#live">← New launches</a></p>
 <article class="file v-{s}">
@@ -833,11 +831,11 @@ def token_page(t: dict, feed: dict) -> str:
 <button type="button" class="copy star watch" data-star="{addr}" aria-pressed="false">☆ Watch</button></p></div>
 <div class="stampbox"><span class="stamp big v-{s}">{STATE[s]}</span><span class="stampnote">{e(note)}</span></div></header>
 <div class="actions">{"".join(actions)}</div>
-<dl class="keynums">{"".join(f"<div><dt>{e(k)}</dt><dd>{ph(key)}</dd></div>" for k, key in keynums)}</dl>
+{stat_board(bool(agent))}
 <div data-l="chart"></div>{"" if agent else '<p class="muted small">Market numbers come from Orbio and cover Orbio agents only.</p>'}
 </article>
 {verdict_block(t, s)}
-<div class="cols">{project_block(t)}{score_block(t)}</div>
+<div class="cols">{project_block(t, s)}{score_block(t)}</div>
 {trader_block(t, now)}
 {treasury_block(t) if tr else ""}
 {identities(t)}
@@ -885,9 +883,31 @@ def verdict_block(t: dict, s: str) -> str:
 <p class="muted">{STATE_TEXT[s]}</p>{extra}{report}</section>"""
 
 
-def project_block(t: dict) -> str:
+def tile(label: str, key: str, cls: str) -> str:
+    """One stat tile: a label, then what the page script draws for `key` (a big value, a gauge or a bar, a caption)."""
+    return f'<div class="tile {cls}"><span class="lbl">{e(label)}</span><div class="tv" data-l="{key}">—</div></div>'
+
+
+def stat_board(agent: bool) -> str:
+    """A file's market numbers: the market cap large with its move beside it, then the tiles a trader scans."""
+    return (f'<div class="stats"><div class="hero"><div class="hero-mc"><span class="lbl">Market cap</span>'
+            f'<span class="mc" data-l="mcap">—</span><span data-l="chg_pill"></span></div>'
+            f'<div><span class="lbl">24h volume</span><span class="hv" data-l="vol">—</span><small class="hc" data-l="vol_where"></small></div>'
+            f'<div><span class="lbl">Price</span><span class="hv" data-l="price">—</span><small class="hc">per token, in USD</small></div></div>'
+            f'<div class="tiles">{tile("Bonding curve", "curve_t", "t-curve")}{tile("24h buys / sells", "trades_t", "t-trades")}'
+            f'{tile("Real holders", "holders_t", "t-holders")}{tile("Agent balance", "bal_t", "t-bal") if agent else ""}</div></div>')
+
+
+def project_block(t: dict, s: str = "") -> str:
     xp = t.get("x_profile") or {}
     parts = []
+    ab = t.get("about") or {}
+    if ab.get("line") and s != "scam":  # an impersonator's page must not describe the project it copies as its own
+        kind = {"utility": "Utility", "meme": "Meme"}.get(ab.get("kind"), "")
+        parts.append(f'<div class="read"><p class="read-k"><span class="lbl">{NAME}’s read</span>'
+                     + (f'<span class="kind k-{e(ab["kind"])}">{kind}</span>' if kind else "")
+                     + f'</p><p class="read-line">{e(ab["line"])}</p></div><p class="muted small">An AI summary of what the '
+                     "launcher’s description, the X account and the site say. It describes; the verdict above is what vouches.</p>")
     if t.get("claim"):
         parts.append(f'<p class="claim">{e(t["claim"])}</p><p class="muted small">Summarised from the site and posts it points at; '
                      "the quote behind it was checked against the page.</p>")
@@ -1004,12 +1024,11 @@ def trader_block(t: dict, now: int) -> str:
 
 
 def treasury_block(t: dict) -> str:
-    cells = [("Spendable balance", "tr_bal", "USDG for inference and tools"), ("Staked", "tr_staked", ph("tr_unlock")),
-             ("CREDIT earned", "tr_earned", "owed plus claimed"), ("CREDIT activated", "tr_act", "spent into the gateway balance"),
-             ("Principal withdrawn", "tr_withdrawn", "taken out of the stake")]
+    cells = [("Spendable balance", "trt_bal", "t-bal"), ("Staked", "trt_staked", "t-stake"), ("CREDIT earned", "trt_earned", "t-credit"),
+             ("CREDIT activated", "trt_act", "t-credit"), ("Principal withdrawn", "trt_wd", "t-wd")]
     return f"""<section class="treasury"><h2>Agent treasury</h2><p class="sub">Trading fees fund this agent: half is staked as
 ORBIO and earns CREDIT, and 45% becomes a balance it can spend on models and tools.</p>
-<dl class="keynums small">{"".join(f'<div><dt>{e(a)}</dt><dd>{ph(k)}</dd><span>{c}</span></div>' for a, k, c in cells)}</dl></section>"""
+<div class="tiles">{"".join(tile(a, k, c) for a, k, c in cells)}</div></section>"""
 
 
 def identities(t: dict) -> str:
@@ -1513,6 +1532,37 @@ th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] bu
 .mc-fam .o{color:var(--muted)}.mc-fam .m{text-align:right}.mc-fam .vs{color:var(--st);font:600 12px var(--sans)}
 @media (max-width:600px){.mapcard{width:min(360px,calc(100vw - 24px))}}
 .mc-more{margin:6px 0 0;font-size:12.5px;color:var(--muted)}
+/* a file's numbers: a hero tinted by the verdict, then tiles, each with its accent, a big value and a gauge or bar */
+.stats{display:grid;gap:10px;margin:18px 0 0}
+.lbl{display:block;font:600 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.hero{display:grid;grid-template-columns:minmax(0,1.6fr) repeat(2,minmax(0,1fr));border:1px solid var(--rule);border-radius:14px;overflow:hidden;
+  background:radial-gradient(120% 160% at 0% 0%,var(--st-bg,var(--sheet-2)),transparent 60%),var(--sheet-2)}
+.hero>div{padding:16px 18px;min-width:0}.hero>div+div{border-left:1px solid var(--rule)}
+.hero .mc{display:block;margin:5px 0 8px;font:800 clamp(30px,4.4vw,42px)/1 var(--display);font-stretch:88%;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.hero .hv{display:block;margin-top:7px;font:700 20px var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hero .hc{display:block;margin-top:8px;font-size:12.5px;color:var(--muted)}
+.pill{display:inline-flex;align-items:center;gap:5px;font:700 13px var(--mono);padding:4px 10px;border-radius:999px;font-variant-numeric:tabular-nums}
+.pill.up{background:var(--ok-bg);color:var(--ok)}.pill.down{background:var(--bad-bg);color:var(--bad)}.pill small{font-weight:500;opacity:.75;margin-left:3px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px}
+.tile{--tint:var(--rule-2);position:relative;min-width:0;background:var(--sheet-2);border:1px solid var(--rule);border-radius:12px;padding:14px 15px;overflow:hidden}
+.tile::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--tint)}
+.tile::after{content:"";position:absolute;inset:0;background:radial-gradient(90% 80% at 100% 0%,var(--tint),transparent 70%);opacity:.09;pointer-events:none}
+.t-curve,.t-stake{--tint:var(--accent)}.t-trades,.t-wd{--tint:var(--ok)}.t-holders{--tint:var(--ink-2)}.t-bal,.t-credit{--tint:var(--warn)}
+.tile:has(.tv-v.bad){--tint:var(--bad)}.treasury .tiles{margin-top:14px}
+.tv{margin-top:8px}.tv-v{display:block;font:700 24px/1.15 var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tv-v em{font-style:normal;font-size:.55em;font-weight:600;color:var(--muted)}.tv-v.bad{color:var(--bad)}
+.tv small{display:block;margin-top:8px;font-size:12.5px;color:var(--muted)}
+.gauge{display:block;height:7px;margin-top:10px;border-radius:4px;background:var(--rule);overflow:hidden}
+.gauge i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,var(--accent),var(--ok))}.gauge.done i{background:var(--ok)}
+.split{display:flex;height:7px;margin-top:10px;border-radius:4px;overflow:hidden;background:var(--bad)}.split i.b{background:var(--ok)}.split i.s{flex:1;background:var(--bad)}
+.split i.b+i.s{border-left:2px solid var(--sheet-2)}
+.lock{font:600 10px var(--mono);letter-spacing:.07em;text-transform:uppercase;padding:1px 6px;border-radius:4px;background:var(--accent-bg);color:var(--accent);margin-right:6px}
+.read{margin:14px 0 6px;padding:14px 16px;border:1px solid var(--rule);border-radius:12px;background:linear-gradient(135deg,var(--accent-bg),transparent 75%),var(--sheet-2)}
+.read-k{display:flex;align-items:center;gap:8px;margin:0}.read-k .lbl{display:inline}
+.kind{font:700 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:var(--accent);color:var(--sheet)}
+.k-meme{background:var(--warn)}.read-line{margin:8px 0 0;font:600 19px/1.4 var(--display);font-stretch:96%;color:var(--ink)}
+@media (max-width:700px){.hero{grid-template-columns:1fr 1fr}.hero-mc{grid-column:1/-1}.hero>div+div{border-left:0;border-top:1px solid var(--rule)}
+.hero>div:last-child{border-left:1px solid var(--rule)}.tiles{grid-template-columns:1fr 1fr}.tv-v{font-size:20px}.read-line{font-size:17px}}
 /* opening a file from the map: the sphere lifts off, grows in the middle of the screen and is read out */
 .scan{position:fixed;inset:0;z-index:60;display:grid;place-items:center;cursor:pointer;color:var(--ink)}
 .scan-bg{position:absolute;inset:0;background:var(--scrim);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);animation:fadein .25s ease-out both}
@@ -1629,10 +1679,32 @@ JS = r"""
       return (s||'<span class="none">The chart fills in as snapshots arrive</span>')+'<span class="tv"><b>'+change(r)+'</b>'+usd(r.v)+' 24h vol</span>'},
     chart:function(r){if(!r.sp||r.sp.length<2)return '';var ys=r.sp.map(function(q){return q[1]}),hrs=(r.sp[r.sp.length-1][0]-r.sp[0][0])/3600;
       return '<figure class="chart">'+spark(r.sp,600,96)+'<figcaption><span>Market cap, last '+(hrs<48?Math.max(1,Math.round(hrs))+' h':Math.round(hrs/24)+' days')+
-        '</span><span>low '+usd(Math.min.apply(null,ys))+' · high '+usd(Math.max.apply(null,ys))+' · now '+usd(ys[ys.length-1])+'</span></figcaption></figure>'},
+        '</span><span>low '+usd(Math.min.apply(null,ys))+' · high '+usd(Math.max.apply(null,ys))+' · now '+usd(r.m!=null?r.m:ys[ys.length-1])+'</span></figcaption></figure>'},
     tr_bal:function(r){return usd(r.tb)},tr_staked:function(r){return num(r.tk||0)+' ORBIO'},tr_earned:function(r){return num(r.te||0)},
     tr_act:function(r){return num(r.ta||0)},tr_withdrawn:function(r){return num(r.tw||0)+' ORBIO'},
-    tr_unlock:function(r){return r.tu?(r.tl?'unlocks '+rel(now()-r.tu):'unlocked'):'—'}
+    tr_unlock:function(r){return r.tu?(r.tl?'unlocks '+rel(now()-r.tu):'unlocked'):'—'},
+    // the file's stat board: a move pill, and tiles with a big value, a gauge or a bar, and a caption
+    chg_pill:function(r){if(r.ch==null)return '';var up=r.ch>=0;
+      return '<span class="pill '+(up?'up':'down')+'">'+(up?'▲':'▼')+' '+Math.abs(Math.round(r.ch)).toLocaleString('en-US')+'%<small>'+
+        (r.chh>=23?'24 h':'in '+r.chh+' h')+'</small></span>'},
+    curve_t:function(r){if(r.g)return '<b class="tv-v">Graduated</b><span class="gauge done"><i style="width:100%"></i></span><small>Trading on its pool now</small>';
+      if(r.c==null)return '<b class="tv-v">—</b>';var c=Math.max(0,Math.min(100,r.c));
+      return '<b class="tv-v">'+r.c.toFixed(1)+'<em>%</em></b><span class="gauge"><i style="width:'+Math.max(1.5,c).toFixed(1)+'%"></i></span><small>'+
+        (c===0?'Nobody has bought yet':'of the way to graduation')+'</small>'},
+    trades_t:function(r){if(r.b==null)return '<b class="tv-v">—</b>';var n=r.b+(r.x||0),pb=n?r.b/n*100:50;
+      return '<b class="tv-v"><span class="up">'+r.b+'</span><em> / </em><span class="down">'+(r.x||0)+'</span></b><span class="split">'+
+        '<i class="b" style="width:'+pb.toFixed(1)+'%"></i><i class="s"></i></span><small>'+(n?Math.round(pb)+'% of trades were buys':'No trades in 24 h')+'</small>'},
+    holders_t:function(r){if(r.h==null)return '<b class="tv-v">—</b>';
+      return '<b class="tv-v">'+num(r.h)+'</b><small>real buyers after '+({'30m':'30 min','6h':'6 h','24h':'a day','7d':'a week'}[r.hk]||r.hk)+'</small>'},
+    bal_t:function(r){return '<b class="tv-v">'+usd(r.tb)+'</b><small>USDG it can spend on AI</small>'},
+    vol_where:function(r){return r.v==null?'':r.g?'traded on its pool':'traded on its bonding curve'},
+    trt_bal:function(r){return '<b class="tv-v">'+usd(r.tb)+'</b><small>USDG for inference and tools</small>'},
+    trt_staked:function(r){return '<b class="tv-v">'+num(r.tk||0)+'<em> ORBIO</em></b><small>'+
+      (r.tu?(r.tl?'<span class="lock">Locked</span>unlocks '+rel(now()-r.tu):'Unlocked'):'Staked for CREDIT')+'</small>'},
+    trt_earned:function(r){return '<b class="tv-v">'+num(r.te||0)+'<em> CREDIT</em></b><small>owed plus claimed</small>'},
+    trt_act:function(r){return '<b class="tv-v">'+num(r.ta||0)+'<em> CREDIT</em></b><small>spent into its gateway balance</small>'},
+    trt_wd:function(r){var wd=r.tw||0;return '<b class="tv-v'+(wd?' bad':'')+'">'+num(wd)+'<em> ORBIO</em></b><small>'+
+      (wd?'taken out of the stake':'Never touched: the stake is intact')+'</small>'}
   };
   function fill(root,r){root.querySelectorAll('[data-l]').forEach(function(el){var f=F[el.dataset.l];if(f)el.innerHTML=f(r)})}
   function fileHref(k){return LIVE&&LIVE.t[k]?href(k):'https://robin.etherscan.io/token/'+k}
