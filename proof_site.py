@@ -17,6 +17,7 @@ import functools
 import hashlib
 import html
 import json
+import math
 import os
 import re
 import shutil
@@ -397,6 +398,104 @@ def tools(token: str) -> str:
             f'<button type="button" class="mini star" data-star="{token}" aria-pressed="false" aria-label="Add to watchlist">☆</button></span>')
 
 
+# ----------------------------------------------------------------- the launch map (home) and ticker lineup (files)
+
+def pack(radii: list[float], gap: float = 3.0, angles: int = 18) -> list[tuple[float, float]]:
+    """Greedy circle packing, in the order given (biggest first reads best): each circle goes to the free spot nearest
+    the centre among the spots touching one already placed. Returns centres, in input order."""
+    placed: list[tuple[float, float, float]] = []
+    trig = [(math.cos(2 * math.pi * k / angles), math.sin(2 * math.pi * k / angles)) for k in range(angles)]
+    for r in radii:
+        if not placed:
+            placed.append((0.0, 0.0, r))
+            continue
+        best = None
+        for x0, y0, r0 in placed:
+            d0 = r0 + r + gap
+            for c, s in trig:
+                x, y = x0 + d0 * c, y0 + d0 * s
+                dist = x * x + y * y
+                if best is not None and dist >= best[0]:
+                    continue
+                if all((x - x1) ** 2 + (y - y1) ** 2 >= (r + r1 + gap) ** 2 - 1e-6 for x1, y1, r1 in placed):
+                    best = (dist, x, y)
+        placed.append((best[1], best[2], r))
+    return [(x, y) for x, y, _ in placed]
+
+
+def bubble_r(t: dict) -> float:
+    """Radius by market cap (area follows it), from 8 for an untraded token to 44."""
+    m = (t.get("market") or {}).get("mcap_usd") or 0
+    return max(8.0, min(44.0, 7 + 4.2 * math.sqrt(m / 1000)))
+
+
+def launch_map(ts: list[dict], now: int) -> str:
+    """Every launch of the last 48 hours as a bubble: sized by market cap, coloured by verdict, and tokens sharing a
+    ticker packed inside one ring, so the real one (or the lack of one) shows among its copies at a glance."""
+    if len(ts) < 2:
+        return ""
+    fams: dict[str, list[dict]] = {}
+    for t in ts:
+        fams.setdefault((t["symbol"] or "?").upper(), []).append(t)
+    items = []  # (radius, [(token, dx, dy, r)], ticker or None)
+    for sym, members in fams.items():
+        members.sort(key=lambda t: -bubble_r(t))
+        rs = [bubble_r(t) for t in members]
+        if len(members) == 1:
+            items.append((rs[0], [(members[0], 0.0, 0.0, rs[0])], None))
+            continue
+        cs = pack(rs, gap=2.5)
+        cx = sum(x for x, _ in cs) / len(cs)
+        cy = sum(y for _, y in cs) / len(cs)
+        inner = [(m, x - cx, y - cy, r) for m, (x, y), r in zip(members, cs, rs)]
+        items.append((max(math.hypot(dx, dy) + r for _, dx, dy, r in inner) + 7, inner, sym))
+    items.sort(key=lambda it: -it[0])
+    centres = pack([it[0] for it in items], gap=9)
+    xs = [x - it[0] for (x, _), it in zip(centres, items)] + [x + it[0] for (x, _), it in zip(centres, items)]
+    ys = [y - it[0] - (14 if it[2] else 0) for (_, y), it in zip(centres, items)] + [y + it[0] for (_, y), it in zip(centres, items)]
+    x0, y0 = min(xs) - 6, min(ys) - 6
+    w, h = max(xs) - x0 + 6, max(ys) - y0 + 6
+    out, labels = [], []
+    for (fx, fy), (R, inner, sym) in zip(centres, items):
+        if sym:  # the ring now, its label last: a pill on top of whatever it touches, so it always reads
+            out.append(f'<g class="fam"><circle cx="{fx - x0:.1f}" cy="{fy - y0:.1f}" r="{R:.1f}"/></g>')
+            text = f"${sym} ×{len(inner)}"
+            pw = 6.4 * len(text) + 14
+            labels.append(f'<g class="famlabel"><rect x="{fx - x0 - pw / 2:.1f}" y="{fy - y0 - R - 9:.1f}" width="{pw:.1f}" '
+                          f'height="18" rx="9"/><text x="{fx - x0:.1f}" y="{fy - y0 - R:.1f}">{e(text)}</text></g>')
+        for t, dx, dy, r in inner:
+            s = state_of(t, now)
+            x, y = fx + dx - x0, fy + dy - y0
+            mc = (t.get("market") or {}).get("mcap_usd")
+            tip = f'${t["symbol"] or "?"}' + (f' #{t["orbio_agent"]}' if t.get("orbio_agent") else "") + f" · {STATE[s]}" \
+                + (f" · {usd(mc)} market cap" if mc else "")
+            label = (f'<text x="{x:.1f}" y="{y:.1f}" style="font-size:{min(13, r * .42):.1f}px">'
+                     f'{e((t["symbol"] or "?")[:7])}</text>') if r >= 17 else ""
+            out.append(f'<a class="bub v-{s}" href="t/{t["token"]}.html" data-t="{t["token"]}" '
+                       f'data-state="{"checking" if s == "unverified" else s}"><title>{e(tip)}</title>'
+                       f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r:.1f}"/>{label}</a>')
+    legend = "".join(f'<span class="v-{k}"><i></i>{label}</span>' for k, label in (
+        ("verified", "Verified"), ("scam", "Impersonator"), ("checking", "Checking"), ("unverified", "No claim")))
+    return (f'<figure class="lmapbox"><svg class="lmap" viewBox="0 0 {w:.0f} {h:.0f}" role="img" '
+            f'aria-label="Map of the last 48 hours of Orbio launches, by verdict">{"".join(out + labels)}</svg>'
+            f'<figcaption class="maplegend">{legend}<span class="muted">Size: market cap · a ring holds the tokens '
+            "sharing a ticker · tap a bubble for its file</span></figcaption></figure>")
+
+
+def lineup(t: dict) -> str:
+    """On a file: every token with this ticker, in launch order, coloured by verdict, this one ringed."""
+    fam = ((t.get("trader") or {}).get("ticker") or {}).get("family") or []
+    if len(fam) < 2:
+        return ""
+    dots = []
+    for i, f in enumerate(fam, 1):
+        tip = f'{ordinal(i)} ${t["symbol"] or "?"}' + (f' · #{f["vault_id"]}' if f.get("vault_id") else "") + f' · {STATE[f["state"]]}'
+        href = f'../t/{f["token"]}.html' if not ON_FILE or f["token"] in ON_FILE else f'{EXPLORER}/token/{f["token"]}'
+        dots.append(f'<a class="v-{f["state"]}{" me" if f["token"] == t["token"] else ""}" href="{e(href)}" title="{e(tip)}">{i}</a>')
+    return (f'<div class="lineup" aria-label="Every token named ${e(t["symbol"] or "?")}, in launch order">{"".join(dots)}</div>'
+            '<p class="muted small lineup-note">In launch order, coloured by verdict. This one is ringed.</p>')
+
+
 # ----------------------------------------------------------------- home and lists
 
 def home(feed: dict) -> str:
@@ -441,6 +540,7 @@ placeholder="Paste a contract address or type a ticker" autocomplete="off" spell
 <section id="live"><div class="sec-head"><div><h2>New on Orbio</h2>
 <p class="sub">Every agent launched in the last 48 hours, newest first. New launches and verdicts appear here as they land.</p></div>
 <div class="filters" role="group" aria-label="Show">{filters}</div></div>
+{launch_map(recent, now)}
 {feed_cards(recent, now)}
 <p class="more"><a href="agents.html">Every Orbio agent on file →</a></p></section>
 
@@ -765,7 +865,7 @@ def trader_block(t: dict, now: int) -> str:
     for g, c, txt in rows:
         groups.setdefault(g, []).append((c, txt))
     body = "".join(f'<h3>{e(g)}</h3><ul class="checks">' + "".join(f'<li class="{c}">{txt}</li>' for c, txt in items) + "</ul>"
-                   for g, items in groups.items())
+                   + (lineup(t) if g == "Original or copy" else "") for g, items in groups.items())
     return (f'<section class="safety trader"><h2>Trader’s card</h2>{body}<p class="muted small">From the chain alone: '
             "holder counts are real end buyers, not routers or bots, and bots are wallets that buy 10 or more launches a day."
             "</p></section>")
@@ -1209,6 +1309,20 @@ th[data-sort] button:focus-visible{outline:2px solid var(--accent);outline-offse
 th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] button::after{content:" ↑"}
 .keynums dd small,.card-nums dd small{font-size:11px;color:var(--muted);font-weight:500}
 .official-ca{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}.official-ca code{word-break:break-all}
+.lmapbox{margin:4px 0 18px}.lmap{display:block;width:100%;max-width:700px;height:auto;margin:0 auto}
+.lmap .bub circle{fill:var(--st-bg);stroke:var(--st);stroke-width:2;transition:stroke-width .15s,opacity .15s}
+.lmap .bub:hover circle,.lmap .bub:focus circle{stroke-width:4}.lmap .bub.dim{opacity:.16}
+.lmap .bub text{fill:var(--st);font-family:var(--mono);font-weight:600;text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.lmap .fam circle{fill:none;stroke:var(--rule-2);stroke-width:1.5;stroke-dasharray:4 4}
+.lmap .famlabel rect{fill:var(--sheet);stroke:var(--rule-2);stroke-width:1}
+.lmap .famlabel text{fill:var(--ink-2);font:600 10.5px var(--mono);text-anchor:middle;dominant-baseline:central}
+.maplegend{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 16px;margin-top:8px;font-size:12.5px}
+.maplegend span{display:inline-flex;align-items:center;gap:6px}.maplegend i{width:10px;height:10px;border-radius:50%;background:var(--st-bg);border:2px solid var(--st)}
+.lineup{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}
+.lineup a{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--st-bg);border:2px solid var(--st);color:var(--st);font:600 11px var(--mono);text-decoration:none}
+.lineup a.me{outline:2px solid var(--ink);outline-offset:2px}.lineup-note{margin:4px 0 0}
+.card[data-state=verified]{box-shadow:inset 4px 0 0 var(--ok)}.card[data-state=scam]{box-shadow:inset 4px 0 0 var(--bad)}
+.card[data-state=checking]{box-shadow:inset 4px 0 0 var(--accent)}
 .trader h3{margin:16px 0 6px;font:600 11.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}.trader h3:first-of-type{margin-top:8px}
 .copynote{margin:0;font-size:13px;color:var(--warn);font-weight:600}
 .token-hero{display:flex;align-items:center;gap:18px;margin-bottom:6px}.token-hero h1{margin:0}
@@ -1305,7 +1419,8 @@ JS = r"""
   function syncStars(){var wl=watchList();document.querySelectorAll('.star').forEach(function(b){var on=wl.indexOf(b.dataset.star)>=0;
     b.setAttribute('aria-pressed',on?'true':'false');b.textContent=b.classList.contains('big')?(on?'★ Watching':'☆ Watch'):(on?'★':'☆')})}
   function applyFilter(){var list=document.getElementById('feed');if(!list)return;
-    list.querySelectorAll('.card').forEach(function(c){c.hidden=filterKey!=='all'&&c.dataset.state!==filterKey})}
+    list.querySelectorAll('.card').forEach(function(c){c.hidden=filterKey!=='all'&&c.dataset.state!==filterKey});
+    document.querySelectorAll('.lmap .bub').forEach(function(b){b.classList.toggle('dim',filterKey!=='all'&&b.dataset.state!==filterKey)})}
   function markNew(){if(!seen)return;document.querySelectorAll('.card[data-t]').forEach(function(c){
     if(+c.dataset.lt>seen&&!c.classList.contains('is-new')){c.classList.add('is-new');var f=c.querySelector('.fileno');
       if(f)f.insertAdjacentHTML('afterend','<span class="newbadge">New</span>')}})}
@@ -1320,7 +1435,8 @@ JS = r"""
   function times(){var t=now();document.querySelectorAll('time[data-ts]').forEach(function(el){el.textContent=rel(t-(+el.dataset.ts))})}
   function apply(){times();if(!LIVE)return;addNew();renderWatch();
     document.querySelectorAll('[data-t]').forEach(function(root){var r=LIVE.t[root.dataset.t];if(!r)return;fill(root,r);
-      if(root.classList.contains('card'))root.dataset.state=r.s==='unverified'?'checking':r.s});
+      if(root.classList.contains('card'))root.dataset.state=r.s==='unverified'?'checking':r.s;
+      if(root.classList.contains('bub')&&r.s){root.setAttribute('class','bub v-'+r.s);root.dataset.state=r.s==='unverified'?'checking':r.s}});
     var n=LIVE.net||{};document.querySelectorAll('[data-l^="net_"]').forEach(function(el){var k=el.dataset.l;
       el.innerHTML=k==='net_orbio'?price(n.orbio_usd):k==='net_mcap'?usd(n.mcap_usd):k==='net_at'?rel(now()-LIVE.at):'—'});
     markNew();syncStars();applyFilter()}
