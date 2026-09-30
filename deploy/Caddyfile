@@ -11,9 +11,12 @@ dossier.example.com {
 
 	# the free API: readable from any site
 	header /api/* Access-Control-Allow-Origin "*"
-	# the numbers every page polls each minute
+	# the numbers every page loads and polls each minute, rewritten on every pass. "private" matters: for a .js file
+	# Cloudflare replaces a short max-age (even no-cache) with its Browser Cache TTL, 4 hours by default, and browsers
+	# then showed market caps hours old on a refresh. It leaves private alone and doesn't cache at the edge; no-cache
+	# makes the browser check its copy (a 304 when unchanged)
 	@live path /api/v1/live.json /api/v1/live.js
-	header @live Cache-Control "public, max-age=15"
+	header @live Cache-Control "private, no-cache"
 	# stylesheet and script URLs carry a content hash (?v=), so a copy never goes stale
 	header /assets/* Cache-Control "public, max-age=31536000, immutable"
 	@pages path / *.html

@@ -1710,8 +1710,9 @@ JS = r"""
     document.addEventListener('keydown',function(ev){if(ev.key!=='Escape'||!mcFor)return;var back=mcFor,inside=mc.contains(document.activeElement);
       hideCard();if(inside)back.focus()});
     window.addEventListener('resize',placeCard);window.addEventListener('hashchange',hideCard)}
-  function load(){if(!D.live||!window.fetch)return;fetch(D.live+(D.live.indexOf('?')<0?'?':'&')+'_='+Date.now(),{cache:'no-store'})
-    .then(function(r){return r.ok?r.json():null}).then(function(j){if(j&&j.t){LIVE=j;apply()}}).catch(function(){})}
+  function load(){if(!D.live||!window.fetch)return spare();fetch(D.live+(D.live.indexOf('?')<0?'?':'&')+'_='+Date.now(),{cache:'no-store'})
+    .then(function(r){return r.ok?r.json():null}).then(function(j){if(j&&j.t){LIVE=j;SPARE=null;apply()}else spare()}).catch(spare)}
+  function spare(){if(!LIVE&&SPARE){LIVE=SPARE;SPARE=null;apply()}}  // no fresh numbers to be had: old ones beat none
   var toastEl=document.querySelector('.toast'),toastT;
   function toast(m){if(!toastEl)return;toastEl.textContent=m;toastEl.hidden=false;clearTimeout(toastT);toastT=setTimeout(function(){toastEl.hidden=true},2200)}
   function copyText(b){var v=b.dataset.copy,label=b.textContent;
@@ -1756,8 +1757,14 @@ JS = r"""
         :'<div class="none">'+(/^0x[0-9a-f]{40}$/.test(v)?'Not on file yet. Dossier covers Orbio agents and the tokens projects claim.':'No match.')+'</div>';
       res.hidden=false});
     q.addEventListener('keydown',function(ev){if(ev.key==='Enter'){var a=res.querySelector('a');if(a){ev.preventDefault();location.href=a.getAttribute('href')}}})}
-  apply();setInterval(load,60000);setInterval(times,60000);
+  // api/v1/live.js is rewritten on every pass of the index, a minute or two apart, so a copy much older than that came
+  // out of a cache (a browser keeps one for hours when a CDN rewrites its headers). Don't paint it: it would show old
+  // market caps, and could turn verdicts the page already has back to older ones. Fetch the numbers now instead, and
+  // fall back to the old copy only if that fails.
+  var SPARE=null;if(LIVE&&now()-LIVE.at>180){SPARE=LIVE;LIVE=null}
+  apply();if(!LIVE)load();setInterval(load,60000);setInterval(times,60000);
   document.addEventListener('visibilitychange',function(){if(!document.hidden)load()});
+  window.addEventListener('pageshow',function(ev){if(ev.persisted)load()});  // back to a page the browser kept in memory
   setTimeout(function(){try{localStorage.setItem('dossier.seen',String(Math.floor(now())))}catch(e){}},4000);
 })();
 """
