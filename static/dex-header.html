@@ -1,0 +1,29 @@
+<!doctype html>
+<!-- The DexScreener header banner (3:1). Regenerate static/dex-header.png: msedge --headless=new --hide-scrollbars --window-size=1500,500 --virtual-time-budget=8000 --screenshot=dex-header.png dex-header.html -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,500..800&family=IBM+Plex+Mono:wght@500;600;700&family=Instrument+Sans:wght@400..700&display=swap">
+<style>
+html,body{margin:0;width:1500px;height:500px;overflow:hidden}
+body{background:#090d12;color:#e7ecf3;font-family:"Instrument Sans",system-ui,sans-serif;position:relative}
+.bg{position:absolute;inset:0;background:radial-gradient(620px 420px at 16% 50%,rgba(57,208,140,.16),transparent 62%),
+  radial-gradient(900px 500px at 100% 0%,rgba(143,163,255,.12),transparent 60%),#090d12}
+.seal{position:absolute;left:92px;top:60px;width:380px;height:380px;filter:drop-shadow(0 0 26px rgba(57,208,140,.28))}
+.text{position:absolute;left:540px;top:0;bottom:0;display:flex;flex-direction:column;justify-content:center;gap:14px}
+.name{font:800 108px/1 "Bricolage Grotesque",sans-serif;letter-spacing:-.02em}
+.tag{font:500 36px "Instrument Sans",sans-serif;color:#b4bfcd}
+.meta{margin-top:10px;font:600 24px "IBM Plex Mono",monospace;letter-spacing:.1em;text-transform:uppercase;color:#39d08c}
+</style></head>
+<body><div class="bg"></div>
+<svg class="seal" viewBox="0 0 512 512" aria-hidden="true"><defs>
+<filter id="rough" x="-10%" y="-10%" width="120%" height="120%"><feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="2" seed="7" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="4"/></filter>
+<path id="ring" d="M256,256 m-151,0 a151,151 0 1,1 302,0 a151,151 0 1,1 -302,0"/></defs>
+<g transform="rotate(-14 256 256)" filter="url(#rough)">
+<circle cx="256" cy="256" r="197" fill="none" stroke="#39d08c" stroke-width="14"/>
+<circle cx="256" cy="256" r="120" fill="none" stroke="#39d08c" stroke-width="7"/>
+<text font-family="IBM Plex Mono" font-weight="700" font-size="31" fill="#39d08c" textLength="945" lengthAdjust="spacing"><textPath href="#ring">DOSSIER • VERIFIED • DOSSIER • VERIFIED •</textPath></text>
+<path d="M203 258 l38 38 l74 -80" fill="none" stroke="#39d08c" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+</g></svg>
+<div class="text"><div class="name">Dossier</div>
+<div class="tag">Know which launch is the real one.</div>
+<div class="meta">dossierscan.com · Orbio · Robinhood Chain</div></div>
+</body></html>
