@@ -272,13 +272,19 @@ def share_tags(title: str, desc: str, path: str | None) -> str:
         url = f"{site}/{'' if path == 'index.html' else path}"
         tags += [f'<link rel="canonical" href="{e(url)}">', f'<meta property="og:url" content="{e(url)}">']
     if site and OG_IMAGE.exists():
-        tags += [f'<meta property="og:image" content="{e(site)}/assets/og.png">', '<meta property="og:image:width" content="1200">',
+        tags += [f'<meta property="og:image" content="{e(site)}/assets/og.png?v={file_version(OG_IMAGE)}">', '<meta property="og:image:width" content="1200">',
                  '<meta property="og:image:height" content="630">', '<meta name="twitter:card" content="summary_large_image">']
     else:
         tags.append('<meta name="twitter:card" content="summary">')
     if path is None:
         tags.append('<meta name="robots" content="noindex">')
     return "".join(tags)
+
+
+@functools.cache
+def file_version(path: Path) -> str:
+    """For images under assets/, which are cached for a year: a new file gets a new URL."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:10] if path.exists() else "0"
 
 
 @functools.cache
@@ -297,7 +303,7 @@ def page(title: str, body: str, feed: dict, depth: int = 0, desc: str = "", path
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{e(title)}</title><meta name="description" content="{e(desc or DESC)}">{share_tags(title, desc or DESC, path)}
-<link rel="icon" href="{FAVICON}"><link rel="apple-touch-icon" href="{up}assets/logo.png"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="icon" href="{FAVICON}"><link rel="apple-touch-icon" href="{up}assets/logo.png?v={file_version(LOGO)}"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="{FONTS}"><link rel="stylesheet" href="{up}assets/style.css?v={v}"></head>
 <body>{header(up)}
 <main class="wrap">{body}</main>
@@ -374,7 +380,7 @@ def signature(feed: dict) -> str:
     now = feed["generated_at"]
     static = [{**{k: v for k, v in t.items() if k not in LIVE_KEYS}, "_state": state_of(t, now)} for t in feed["tokens"]]
     blob = json.dumps({"speed": feed.get("speed"), "method": feed.get("method"), "bot": bot_username(), "site": site_url(),
-                       "assets": asset_version(), "tokens": static}, sort_keys=True, default=str)
+                       "assets": [asset_version(), file_version(OG_IMAGE), file_version(LOGO)], "tokens": static}, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 
@@ -971,7 +977,7 @@ def strategy_page(feed: dict) -> str:
               "passes": split_bar(PASS_SPLIT, "Pass revenue: 70% burned, 30% treasury"), "flywheel": flywheel(),
               "ledger": ledger(d, feed)}
     body = re.sub(r"<p>@@(\w+)@@</p>", lambda m: blocks.get(m.group(1), ""), md(text))
-    body = re.sub(r"^(<h1 [^>]*>.*?</h1>)", r'<div class="token-hero"><img src="assets/logo.png" alt="The $DOSSIER seal" '
+    body = re.sub(r"^(<h1 [^>]*>.*?</h1>)", rf'<div class="token-hero"><img src="assets/logo.png?v={file_version(LOGO)}" alt="The $DOSSIER seal" '
                   r'width="104" height="104">\1</div>', body, count=1)
     return f'<article class="prose">{body}</article>'
 
