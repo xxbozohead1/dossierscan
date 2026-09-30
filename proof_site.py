@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import time
+import urllib.parse
 from pathlib import Path
 
 import orbio_watch as w
@@ -211,13 +212,17 @@ def bars(scores: dict | None, labels: bool = False) -> str:
 
 # ----------------------------------------------------------------- page chrome
 
-MARK = ('<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5a1.5 1.5 0 0 1 1.5-1.5h5l2 2h8a1.5 1.5 0 0 1 '
-        '1.5 1.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z" fill="none" stroke="currentColor" stroke-width="1.8"/>'
-        '<path d="M8.5 12.5l2.3 2.3 4.7-4.6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" '
-        'stroke-linejoin="round"/></svg>')
-FAVICON = ("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' "
-           "height='32' rx='8' fill='%230d1522'/%3E%3Cpath d='M9 16.5l4.5 4.5L23 11.5' stroke='%23fff' stroke-width='3.2' "
-           "fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+# the $DOSSIER seal (static/logo.html) drawn for small sizes: the lettered ring becomes a dashed one
+MARK = ('<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(-14 12 12)" fill="none" stroke="currentColor">'
+        '<circle cx="12" cy="12" r="10.3" stroke-width="1.8"/><circle cx="12" cy="12" r="8.1" stroke-width="1.5" '
+        'stroke-dasharray="1.5 1.3" opacity=".7"/><circle cx="12" cy="12" r="5.9" stroke-width="1"/>'
+        '<path d="M9.5 12.1l1.8 1.8 3.4-3.7" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></g></svg>')
+FAVICON = "data:image/svg+xml," + urllib.parse.quote(
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='#0d1522'/>"
+    "<g transform='rotate(-14 16 16)' fill='none' stroke='#39d08c'><circle cx='16' cy='16' r='12.4' stroke-width='2.6'/>"
+    "<circle cx='16' cy='16' r='7.4' stroke-width='1.4'/><path d='M12.7 16.2l2.4 2.4 4.5-4.9' stroke-width='2.7' "
+    "stroke-linecap='round' stroke-linejoin='round'/></g></svg>", safe=":/=' ")
+LOGO = ROOT / "static" / "logo.png"  # the full seal, 512x512: the $DOSSIER page and the home-screen icon
 NAV = (("index.html#live", "New launches"), ("index.html#board", "Board"), ("scams.html", "Impersonators"),
        ("token.html", "$DOSSIER"), ("method.html", "Method"), ("api.html", "API"))
 
@@ -292,7 +297,7 @@ def page(title: str, body: str, feed: dict, depth: int = 0, desc: str = "", path
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{e(title)}</title><meta name="description" content="{e(desc or DESC)}">{share_tags(title, desc or DESC, path)}
-<link rel="icon" href="{FAVICON}"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="icon" href="{FAVICON}"><link rel="apple-touch-icon" href="{up}assets/logo.png"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="{FONTS}"><link rel="stylesheet" href="{up}assets/style.css?v={v}"></head>
 <body>{header(up)}
 <main class="wrap">{body}</main>
@@ -966,6 +971,8 @@ def strategy_page(feed: dict) -> str:
               "passes": split_bar(PASS_SPLIT, "Pass revenue: 70% burned, 30% treasury"), "flywheel": flywheel(),
               "ledger": ledger(d, feed)}
     body = re.sub(r"<p>@@(\w+)@@</p>", lambda m: blocks.get(m.group(1), ""), md(text))
+    body = re.sub(r"^(<h1 [^>]*>.*?</h1>)", r'<div class="token-hero"><img src="assets/logo.png" alt="The $DOSSIER seal" '
+                  r'width="104" height="104">\1</div>', body, count=1)
     return f'<article class="prose">{body}</article>'
 
 
@@ -993,7 +1000,7 @@ h2{font-size:22px;line-height:1.2;font-weight:700;font-stretch:92%}h3{font-size:
 .top{background:var(--sheet);border-bottom:1px solid var(--rule)}
 .top .wrap{display:flex;align-items:center;gap:8px 28px;min-height:58px;flex-wrap:wrap;padding-block:8px}
 .brand{display:flex;align-items:center;gap:8px;color:var(--ink);font:800 21px/1 var(--display);font-stretch:85%;letter-spacing:-.01em}
-.brand:hover{text-decoration:none}.mark{width:24px;height:24px}
+.brand:hover{text-decoration:none}.mark{width:26px;height:26px;color:var(--ok)}
 .top nav{display:flex;gap:4px 18px;flex-wrap:wrap;font-weight:500}.top nav a{color:var(--ink-2)}
 main{padding-block:28px 56px}[hidden]{display:none!important}
 .stack{display:flex;flex-direction:column;gap:52px}.filepage{display:flex;flex-direction:column;gap:16px}.filepage>.crumb{margin:0}
@@ -1124,6 +1131,8 @@ th[data-sort] button{all:unset;cursor:pointer;font:inherit;letter-spacing:inheri
 th[data-sort] button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] button::after{content:" ↑"}
 .keynums dd small,.card-nums dd small{font-size:11px;color:var(--muted);font-weight:500}
+.token-hero{display:flex;align-items:center;gap:18px;margin-bottom:6px}.token-hero h1{margin:0}
+.token-hero img{width:104px;height:104px;border-radius:50%;flex:none;box-shadow:0 6px 24px rgba(8,14,26,.25)}
 .official{background:var(--sheet);border:1px solid var(--rule);border-left:4px solid var(--warn);border-radius:12px;padding:16px 18px;margin:20px 0}
 .official.live{border-left-color:var(--ok)}.official .eyebrow{margin-bottom:6px}.official p{margin:6px 0 0}
 .official .big{font:700 20px var(--display);font-stretch:92%;margin:0}
@@ -1315,8 +1324,9 @@ def build(feed: dict, out: Path = OUT) -> int:
         desc="How $DOSSIER's trading fees pay for Dossier's checks, and where passes, buybacks and burns go.")
     # served by the host for any address with no file (Cloudflare Pages would otherwise serve the home page)
     (tmp / "404.html").write_text(page(f"No file here · {NAME}", not_found_page(), feed, path=None, root="/"), "utf-8")
-    if OG_IMAGE.exists():
-        shutil.copyfile(OG_IMAGE, tmp / "assets" / "og.png")
+    for src in (OG_IMAGE, LOGO):
+        if src.exists():
+            shutil.copyfile(src, tmp / "assets" / src.name)
     site = site_url()
     (tmp / "robots.txt").write_text("User-agent: *\nAllow: /\n" + (f"Sitemap: {site}/sitemap.xml\n" if site else ""), "utf-8")
     if site:
