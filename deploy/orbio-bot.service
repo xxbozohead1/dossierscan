@@ -8,6 +8,8 @@ Wants=network-online.target
 [Service]
 User=orbio
 WorkingDirectory=/opt/orbio
+# local time for the logs and the daily digest (PROOF_DIGEST_HOUR); setup.sh sets it
+Environment=TZ=Etc/UTC
 # the runner restarts Python itself and holds the one-copy lock; systemd restarts the runner
 ExecStart=/bin/sh /opt/orbio/run_bot.sh
 Restart=always

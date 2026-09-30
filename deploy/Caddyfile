@@ -1,8 +1,10 @@
-# Dossier, served from this server behind Cloudflare's proxy (the orange cloud).
-# Visitors get Cloudflare's certificate; between Cloudflare and this server, a Cloudflare Origin certificate
-# (Cloudflare SSL/TLS mode "Full (strict)"). deploy/setup.sh replaces dossier.example.com and /opt/orbio.
+# Dossier, served from this server behind Cloudflare's proxy (the orange cloud), Cloudflare SSL/TLS mode "Full (strict)".
+# Between Cloudflare and this server: a Let's Encrypt certificate Caddy gets and renews itself (Cloudflare's "Always
+# Use HTTPS" must stay off, so the renewal check reaches the server over plain HTTP; Caddy redirects visitors to HTTPS
+# itself), or a Cloudflare Origin certificate when /etc/caddy/cf-origin.pem and cf-origin-key.pem exist.
+# deploy/setup.sh fills in @tls, dossier.example.com and /opt/orbio.
 dossier.example.com {
-	tls /etc/caddy/cf-origin.pem /etc/caddy/cf-origin-key.pem
+	# @tls
 	root * /opt/orbio/data/site
 	encode zstd gzip
 	file_server
@@ -27,8 +29,8 @@ dossier.example.com {
 	}
 }
 
-# www. goes to the bare domain (needs a proxied CNAME www -> the domain; the origin certificate covers *.domain)
+# www. goes to the bare domain (needs a proxied CNAME www -> the domain)
 www.dossier.example.com {
-	tls /etc/caddy/cf-origin.pem /etc/caddy/cf-origin-key.pem
+	# @tls
 	redir https://dossier.example.com{uri} permanent
 }

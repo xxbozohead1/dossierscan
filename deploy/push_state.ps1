@@ -2,10 +2,13 @@
 # Windows copies first: two watchers would both poll X (CREDIT twice) and both post to Telegram.
 # Run after deploy/setup.sh has run on the server:
 #   powershell -ExecutionPolicy Bypass -File deploy\push_state.ps1 -Server root@203.0.113.7
-# -Dir is the checkout on the server (default /opt/orbio). Needs ssh/scp (built into Windows 11).
-param([Parameter(Mandatory = $true)][string]$Server, [string]$Dir = "/opt/orbio")
+# -Dir is the checkout on the server (default /opt/orbio); -Key an SSH key file for the server, when it isn't the
+# default one. Needs ssh/scp (built into Windows 11).
+param([Parameter(Mandatory = $true)][string]$Server, [string]$Dir = "/opt/orbio", [string]$Key = "")
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
+$sshArgs = @()
+if ($Key) { $sshArgs = @("-i", $Key) }
 
 # 1. the log-on tasks, then any runner or Python they leave behind (stopping a task can orphan its child)
 foreach ($t in "orbio-watch", "orbio-proof", "orbio-bot") {
@@ -29,9 +32,9 @@ $pack = "orbio-state.tgz"
 tar -czf $pack --exclude=data/site --exclude=data/site.new --exclude=data/site.old --exclude=data/site_deploy `
     --exclude=*.log --exclude=*.heartbeat --exclude=*.lock data .env
 if ($LASTEXITCODE -ne 0) { throw "tar failed" }
-scp $pack "${Server}:/tmp/$pack"
+scp @sshArgs $pack "${Server}:/tmp/$pack"
 if ($LASTEXITCODE -ne 0) { throw "upload failed" }
-ssh $Server "tar -xzf /tmp/$pack -C $Dir && rm /tmp/$pack && chown -R orbio:orbio $Dir/data $Dir/.env && chmod 600 $Dir/.env && chmod 711 $Dir/data"
+ssh @sshArgs $Server "tar -xzf /tmp/$pack -C $Dir && rm /tmp/$pack && chown -R orbio:orbio $Dir/data $Dir/.env && chmod 600 $Dir/.env && chmod 711 $Dir/data"
 if ($LASTEXITCODE -ne 0) { throw "unpacking on the server failed" }
 Remove-Item $pack
 Write-Host "Done. The Windows tasks stay disabled; start the services on the server (deploy/HETZNER.md, step 6)."
