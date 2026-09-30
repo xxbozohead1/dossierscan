@@ -438,9 +438,53 @@ def bubble_r(t: dict) -> float:
     return max(8.0, min(44.0, 7 + 4.2 * math.sqrt(m / 1000)))
 
 
+def map_notes(t: dict, now: int) -> list[list[str]]:
+    """The map card's short list for one bubble: original or copy first, then the worst of the rest of the trader's
+    card (the same thresholds as trader_rows), four at most. Plain text: the page script escapes it."""
+    tc, ca, s, sym = t.get("trader") or {}, t.get("creator_activity") or {}, state_of(t, now), t["symbol"] or "?"
+    head, rest = [], []
+    tk = tc.get("ticker")
+    if tk and tk["rank"] == 1:
+        head.append(["ok", f"First token named ${sym}" + (f"; {tk['later']} more since" if tk["later"] else "")])
+    elif tk:
+        f = tk["first"] or {}
+        head.append(["ok" if s == "verified" else "warn", f"{ordinal(tk['rank'])} ${sym}: the first"
+                     + (f" (#{f['vault_id']})" if f.get("vault_id") else "")
+                     + f" launched {fmt_span((t['launched_at'] or 0) - (f.get('ts') or 0))} earlier"])
+    ln, dev = tc.get("launch") or {}, tc.get("dev") or {}
+    if (ln.get("launch_block_buyers") or 0) >= 3:
+        rest.append(["bad", f"Bundled: {ln['launch_block_buyers']} buyers in the launch block"])
+    if "snipers" in ln:
+        n, pct, win = ln["snipers"], ln.get("sniped_pct") or 0, ln.get("window_s", 10)
+        rest.append(["ok" if not n or pct < 10 else "warn" if pct < 25 else "bad",
+                     f"No snipers in the first {win} s" if not n else f"Snipers took {pct:g}% in the first {win} s"])
+    if ca.get("bought"):
+        sp = ca.get("sold_pct") or 0
+        rest.append(["bad" if sp >= 50 else "warn" if sp else "ok",
+                      f"Creator sold {sp}% of its launch buy" if sp else "Creator hasn't sold its launch buy"])
+    elif ca:
+        rest.append(["ok", "Creator didn't buy at launch"])
+    if dev.get("walked_away"):
+        n = dev["walked_away"]
+        rest.append(["bad", f"Creator sold out of {n} earlier launch{'' if n == 1 else 'es'}"])
+    if dev.get("launches_week"):
+        n = dev["launches_week"]
+        rest.append(["warn" if n < 3 else "bad", f"Creator launched {plural(n, 'other token')} this week"])
+    top10 = next((f for f in t.get("facts") or [] if f["line"] == "top10"), None)
+    if top10 and isinstance(top10.get("top10_share"), (int, float)):
+        sh = top10["top10_share"]
+        rest.append(["ok" if sh < .3 else "warn" if sh < .5 else "bad",
+                     f"Top 10 holders own {sh:.0%}" if sh >= .01 else "Top 10 holders own under 1%"])
+    rest += [["bad", FLAGS[f]] for f in t.get("flags") or [] if f in FLAGS and f not in COVERED_FLAGS]
+    rest.sort(key=lambda n: ("bad", "warn", "ok").index(n[0]))  # stable: equal ones keep the order above
+    return (head + rest)[:4]
+
+
 def launch_map(ts: list[dict], now: int) -> str:
     """Every launch of the last 48 hours as a bubble: sized by market cap, coloured by verdict, and tokens sharing a
-    ticker packed inside one ring, so the real one (or the lack of one) shows among its copies at a glance."""
+    ticker packed inside one ring, so the real one (or the lack of one) shows among its copies at a glance. The page
+    script adds the interaction: a card with each bubble's numbers, a ticker's family lit up together, and the legend
+    as a filter. What it needs beyond the live numbers is in the #mapx block."""
     if len(ts) < 2:
         return ""
     fams: dict[str, list[dict]] = {}
@@ -465,12 +509,20 @@ def launch_map(ts: list[dict], now: int) -> str:
     x0, y0 = min(xs) - 6, min(ys) - 6
     w, h = max(xs) - x0 + 6, max(ys) - y0 + 6
     out, labels = [], []
+    extra: dict = {"t": {}, "f": []}  # per token: the card's notes and ticker rank; per ring: its members in launch order
     for (fx, fy), (R, inner, sym) in zip(centres, items):
+        fam = ""
         if sym:  # the ring now, its label last: a pill on top of whatever it touches, so it always reads
-            out.append(f'<g class="fam"><circle cx="{fx - x0:.1f}" cy="{fy - y0:.1f}" r="{R:.1f}"/></g>')
+            fam = f' data-f="{len(extra["f"])}"'
+            ranks = [((m.get("trader") or {}).get("ticker") or {}) for m, *_ in inner]
+            extra["f"].append({"s": sym, "n": max([len(inner)] + [k.get("total") or 0 for k in ranks]),
+                               "m": [m["token"] for m, *_ in sorted(inner, key=lambda it: it[0]["launched_at"] or 0)]})
+            out.append(f'<g class="fam"{fam}><circle cx="{fx - x0:.1f}" cy="{fy - y0:.1f}" r="{R:.1f}"/></g>')
             text = f"${sym} ×{len(inner)}"
             pw = 6.4 * len(text) + 14
-            labels.append(f'<g class="famlabel{" pair" if len(inner) < 3 else ""}"><rect x="{fx - x0 - pw / 2:.1f}" y="{fy - y0 - R - 9:.1f}" width="{pw:.1f}" '
+            labels.append(f'<g class="famlabel{" pair" if len(inner) < 3 else ""}"{fam} tabindex="0" role="button" '
+                          f'aria-label="{e(f"{len(inner)} tokens named ${sym}: compare them")}">'
+                          f'<rect x="{fx - x0 - pw / 2:.1f}" y="{fy - y0 - R - 9:.1f}" width="{pw:.1f}" '
                           f'height="18" rx="9"/><text x="{fx - x0:.1f}" y="{fy - y0 - R:.1f}">{e(text)}</text></g>')
         for t, dx, dy, r in inner:
             s = state_of(t, now)
@@ -482,15 +534,22 @@ def launch_map(ts: list[dict], now: int) -> str:
                      f'{e((t["symbol"] or "?")[:7])}</text>') if r >= 17 else ""
             if r >= 30:  # a phone shows the map at about half size: only big bubbles get a (bigger) label there
                 label += f'<text class="m" x="{x:.1f}" y="{y:.1f}">{e((t["symbol"] or "?")[:int(2 * r * .85 / 10.8)])}</text>'
-            out.append(f'<a class="bub v-{s}" href="t/{t["token"]}.html" data-t="{t["token"]}" '
+            tk = (t.get("trader") or {}).get("ticker") or {}
+            extra["t"][t["token"]] = {k: v for k, v in (("n", map_notes(t, now)),
+                                                        ("o", tk.get("rank") if (tk.get("total") or 0) > 1 else None)) if v}
+            out.append(f'<a class="bub v-{s}" href="t/{t["token"]}.html" data-t="{t["token"]}"{fam} '
                        f'data-state="{"checking" if s == "unverified" else s}"><title>{e(tip)}</title>'
                        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r:.1f}"/>{label}</a>')
-    legend = "".join(f'<span class="v-{k}"><i></i>{label}</span>' for k, label in (
-        ("verified", "Verified"), ("scam", "Impersonator"), ("checking", "Checking"), ("unverified", "No claim")))
-    return (f'<figure class="lmapbox"><svg class="lmap" viewBox="0 0 {w:.0f} {h:.0f}" role="img" '
+    # every launch in the last 48 hours is still being checked if nobody has claimed it, so "no claim" never shows here
+    legend = "".join(f'<button type="button" class="v-{k}" data-filter="{k}" aria-pressed="false"><i></i>{label}</button>'
+                     for k, label in (("verified", "Verified"), ("scam", "Impersonator"), ("checking", "Checking")))
+    return (f'<figure class="lmapbox"><svg class="lmap" viewBox="0 0 {w:.0f} {h:.0f}" role="group" '
             f'aria-label="Map of the last 48 hours of Orbio launches, by verdict">{"".join(out + labels)}</svg>'
             f'<figcaption class="maplegend">{legend}<span class="muted">Size: market cap · a ring holds the tokens '
-            "sharing a ticker · tap a bubble for its file</span></figcaption></figure>")
+            'sharing a ticker · a pulse: launched in the last hour · <span class="on-hover">point at a bubble for its '
+            'numbers, click for its file</span><span class="on-touch">tap a bubble for its numbers, tap again for its file'
+            f'</span></span></figcaption><script type="application/json" id="mapx">'
+            f'{inert(json.dumps(extra, separators=(",", ":"), ensure_ascii=False))}</script></figure>')
 
 
 def lineup(t: dict) -> str:
@@ -1321,15 +1380,50 @@ th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] bu
 .keynums dd small,.card-nums dd small{font-size:11px;color:var(--muted);font-weight:500}
 .official-ca{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}.official-ca code{word-break:break-all}
 .lmapbox{margin:4px 0 18px}.lmap{display:block;width:100%;max-width:700px;height:auto;margin:0 auto}
-.lmap .bub circle{fill:var(--st-bg);stroke:var(--st);stroke-width:2;transition:stroke-width .15s,opacity .15s}
-.lmap .bub:hover circle,.lmap .bub:focus circle{stroke-width:4}.lmap .bub.dim{opacity:.16}
+.lmap .bub{transition:opacity .15s}.lmap .bub:focus{outline:none}
+.lmap .bub circle{fill:var(--st-bg);stroke:var(--st);stroke-width:2;transition:stroke-width .15s}
+.lmap .bub:hover circle,.lmap .bub:focus-visible circle,.lmap .bub.cur circle{stroke-width:4}
+.lmap .bub.dim{opacity:.16;pointer-events:none}.lmap.famfocus .bub:not(.hl):not(.dim){opacity:.28}
 .lmap .bub text{fill:var(--st);font-family:var(--mono);font-weight:600;text-anchor:middle;dominant-baseline:central;pointer-events:none}
-.lmap .fam circle{fill:none;stroke:var(--rule-2);stroke-width:1.5;stroke-dasharray:4 4}
+.lmap .bub .halo{fill:none;stroke:var(--st);stroke-width:2;opacity:0;pointer-events:none;transform-box:fill-box;transform-origin:center}
+.lmap .bub.fresh .halo{animation:halo 2.4s ease-out infinite}
+@keyframes halo{0%{opacity:.75;transform:scale(1)}80%,100%{opacity:0;transform:scale(1.7)}}
+@media (prefers-reduced-motion:reduce){.lmap .bub.fresh .halo{animation:none;opacity:.45;transform:scale(1.3)}}
+.lmap .fam circle{fill:none;stroke:var(--rule-2);stroke-width:1.5;stroke-dasharray:4 4;pointer-events:visible;transition:stroke .15s}
+.lmap .fam.on circle{stroke:var(--ink-2);stroke-dasharray:none}
 .lmap .bub text.m{display:none;font-size:18px}
-.lmap .famlabel rect{fill:var(--sheet);stroke:var(--rule-2);stroke-width:1}
+.lmap .famlabel{cursor:pointer}.lmap .famlabel:focus{outline:none}
+.lmap .famlabel rect{fill:var(--sheet);stroke:var(--rule-2);stroke-width:1;transition:stroke .15s}
+.lmap .famlabel.on rect,.lmap .famlabel:focus-visible rect{stroke:var(--ink-2);stroke-width:1.5}
 .lmap .famlabel text{fill:var(--ink-2);font:600 10.5px var(--mono);text-anchor:middle;dominant-baseline:central}
-.maplegend{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 16px;margin-top:8px;font-size:12.5px}
-.maplegend span{display:inline-flex;align-items:center;gap:6px}.maplegend i{width:10px;height:10px;border-radius:50%;background:var(--st-bg);border:2px solid var(--st)}
+.maplegend{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px 10px;margin-top:8px;font-size:12.5px}
+.maplegend button{display:inline-flex;align-items:center;gap:6px;font:500 12.5px var(--sans);color:var(--ink);background:none;border:1px solid transparent;border-radius:999px;padding:3px 9px;cursor:pointer;transition:opacity .15s,border-color .15s}
+.maplegend button:hover{border-color:var(--rule-2)}.maplegend button[aria-pressed=true]{border-color:var(--st);background:var(--st-bg)}
+.maplegend.filtering button:not([aria-pressed=true]){opacity:.5}
+.maplegend i{width:10px;height:10px;border-radius:50%;background:var(--st-bg);border:2px solid var(--st)}
+.maplegend>.muted{flex-basis:100%;text-align:center}
+.on-touch{display:none}@media (hover:none){.on-hover{display:none}.on-touch{display:inline}}
+.mapcard{position:absolute;z-index:40;width:292px;max-width:calc(100vw - 16px);background:var(--sheet);border:1px solid var(--rule-2);border-radius:12px;box-shadow:0 14px 36px rgba(8,14,26,.3);padding:12px 14px;font-size:13.5px;pointer-events:none;opacity:0;transform:translateY(3px);transition:opacity .12s,transform .12s}
+.mapcard.on{opacity:1;transform:none}.mapcard.pinned{pointer-events:auto}
+.mc-top{display:flex;align-items:center;justify-content:space-between;gap:8px;font:500 11.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.mc-top .x{all:unset;cursor:pointer;font:600 18px/1 var(--sans);padding:4px 8px;margin:-8px -10px -8px 0;color:var(--muted)}.mc-top .x:hover{color:var(--ink)}
+.mc-title{margin:6px 0 0;display:flex;align-items:center;gap:7px;min-width:0}.mc-title b{flex:none;font:700 18px var(--display);font-stretch:90%}
+.mc-title .nm{flex:1;min-width:0;color:var(--muted);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mc-title .chip{margin-left:auto}
+.mapcard .spark{height:34px;margin:8px 0 0}
+.mc-nums{display:grid;grid-template-columns:repeat(4,auto);justify-content:space-between;gap:6px 10px;margin:8px 0 0;padding:8px 0;border-block:1px dashed var(--rule)}
+.mc-nums dt{font-size:11px;color:var(--muted)}.mc-nums dd{margin:1px 0 0;font:600 13px var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.mc-nums dd small{display:none}
+.mapcard .checks{margin:9px 0 0;gap:5px;font-size:13px;line-height:1.35}
+.mc-why{margin:9px 0 0;color:var(--ink-2);font-size:13px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.mc-real{margin:6px 0 0;font-size:13px}.mc-hint{margin:9px 0 0;font:500 11.5px var(--mono);color:var(--muted)}
+.mc-act{display:flex;gap:6px;align-items:center;margin-top:11px}.mc-act .btn{padding:6px 11px;font-size:13px}
+.mc-sum{margin:6px 0 0;font-size:13px;color:var(--ink-2)}
+.mc-fam{list-style:none;margin:9px 0 0;padding:0;display:grid;gap:2px}
+.mc-fam a,.mc-fam span.row{display:grid;grid-template-columns:12px 34px 40px 1fr auto;align-items:center;gap:8px;padding:4px 6px;margin:0 -6px;border-radius:6px;color:var(--ink);font:500 12.5px var(--mono);font-variant-numeric:tabular-nums}
+.mc-fam a:hover{background:var(--sheet-2);text-decoration:none}.mc-fam i{width:10px;height:10px;border-radius:50%;background:var(--st-bg);border:2px solid var(--st)}
+.mc-fam .o{color:var(--muted)}.mc-fam .m{text-align:right}.mc-fam .vs{color:var(--st);font:600 12px var(--sans)}
+@media (max-width:600px){.mapcard{width:min(360px,calc(100vw - 24px))}}
+.mc-more{margin:6px 0 0;font-size:12.5px;color:var(--muted)}
 .lineup{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}
 .lineup a{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--st-bg);border:2px solid var(--st);color:var(--st);font:600 11px var(--mono);text-decoration:none}
 .lineup a.me{outline:2px solid var(--ink);outline-offset:2px}.lineup-note{margin:4px 0 0}
@@ -1447,7 +1541,10 @@ JS = r"""
     b.setAttribute('aria-pressed',on?'true':'false');b.textContent=b.classList.contains('watch')?(on?'★ Watching':'☆ Watch'):(on?'★':'☆')})}
   function applyFilter(){var list=document.getElementById('feed');if(!list)return;
     list.querySelectorAll('.card').forEach(function(c){c.hidden=filterKey!=='all'&&c.dataset.state!==filterKey});
-    document.querySelectorAll('.lmap .bub').forEach(function(b){b.classList.toggle('dim',filterKey!=='all'&&b.dataset.state!==filterKey)})}
+    document.querySelectorAll('.lmap .bub').forEach(function(b){b.classList.toggle('dim',filterKey!=='all'&&b.dataset.state!==filterKey)});
+    if(mcFor&&mcFor.classList.contains('dim'))hideCard()}
+  function setFilter(k){filterKey=k;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',x.dataset.filter===k?'true':'false')});
+    var lg=document.querySelector('.maplegend');if(lg)lg.classList.toggle('filtering',k!=='all');applyFilter()}
   function markNew(){if(!seen)return;document.querySelectorAll('.card[data-t]').forEach(function(c){
     if(+c.dataset.lt>seen&&!c.classList.contains('is-new')){c.classList.add('is-new');var f=c.querySelector('.fileno');
       if(f)f.insertAdjacentHTML('afterend','<span class="newbadge">New</span>')}})}
@@ -1463,10 +1560,92 @@ JS = r"""
   function apply(){times();if(!LIVE)return;addNew();renderWatch();
     document.querySelectorAll('[data-t]').forEach(function(root){var r=LIVE.t[root.dataset.t];if(!r)return;fill(root,r);
       if(root.classList.contains('card'))root.dataset.state=r.s==='unverified'?'checking':r.s;
-      if(root.classList.contains('bub')&&r.s){root.setAttribute('class','bub v-'+r.s);root.dataset.state=r.s==='unverified'?'checking':r.s}});
+      if(root.classList.contains('bub'))bubble(root,r)});
     var n=LIVE.net||{};document.querySelectorAll('[data-l^="net_"]').forEach(function(el){var k=el.dataset.l;
       el.innerHTML=k==='net_orbio'?price(n.orbio_usd):k==='net_mcap'?usd(n.mcap_usd):k==='net_at'?rel(now()-LIVE.at):'—'});
-    markNew();syncStars();applyFilter()}
+    if(mcFor)renderCard();markNew();syncStars();applyFilter()}
+  // ---- the launch map: a card for the bubble under the pointer (on a phone a tap pins it, a second tap opens the
+  // file), a ticker's family lit up together, the legend as a filter, and a pulse on launches from the last hour
+  var MAP=document.querySelector('.lmap'),MX={t:{},f:[]},mc=null,mcFor=null,mcPinned=false,mcT=0,ptr='mouse';
+  if(MAP){try{MX=JSON.parse(document.getElementById('mapx').textContent)}catch(e){}
+    // the card replaces the browser's own tooltip; the text stays as the bubble's name for screen readers
+    MAP.querySelectorAll('.bub').forEach(function(b){var t=b.querySelector('title');if(t){b.setAttribute('aria-label',t.textContent);t.remove()}})}
+  function bubble(b,r){if(!r.s)return;for(var v in LABEL)b.classList.toggle('v-'+v,v===r.s);b.dataset.state=r.s==='unverified'?'checking':r.s;
+    var fresh=now()-(r.lt||0)<3600;b.classList.toggle('fresh',fresh);
+    if(fresh&&!b.querySelector('.halo')){var c=b.querySelector('circle'),h=c.cloneNode(false);h.setAttribute('class','halo');b.insertBefore(h,c)}}
+  function ord(n){var v=n%100;return n+(v>=10&&v<=20?'th':{1:'st',2:'nd',3:'rd'}[n%10]||'th')}
+  function mapTarget(n){var el=n&&n.closest?n.closest('.bub,.famlabel,.fam'):null;return el&&MAP.contains(el)&&!el.classList.contains('dim')?el:null}
+  function closeBtn(){return mcPinned?'<button type="button" class="x" aria-label="Close">×</button>':''}
+  function tokCard(k,kb){var r=(LIVE&&LIVE.t[k])||{},x=MX.t[k]||{},s=r.s||'checking',sym='$'+esc(r.sym||'?');
+    var h='<div class="mc-top"><span>'+(r.a?'File '+r.a:'Pons launch')+(r.lt?' · '+rel(now()-r.lt):'')+'</span>'+closeBtn()+'</div>'+
+      '<p class="mc-title"><b>'+sym+'</b><span class="nm">'+esc(r.n||'')+'</span>'+chip(s)+'</p>'+
+      spark(r.sp,280,34)+'<dl class="mc-nums"><div><dt>Market cap</dt><dd>'+usd(r.m)+'</dd></div><div><dt>24h</dt><dd>'+change(r)+'</dd></div>'+
+      '<div><dt>Curve</dt><dd>'+(r.g?'<span class="grad">Graduated</span>':r.c==null?'—':r.c.toFixed(1)+'%')+'</dd></div>'+
+      '<div><dt>Holders</dt><dd>'+(r.h==null?'—':r.h)+'</dd></div></dl>';
+    if(x.n)h+='<ul class="checks">'+x.n.map(function(q){return '<li class="'+esc(q[0])+'">'+esc(q[1])+'</li>'}).join('')+'</ul>';
+    if(r.why)h+='<p class="mc-why">'+esc(r.why)+'</p>';
+    if(s==='scam'&&r.rl){var real='<b>$'+esc(r.rl[1]||'?')+'</b>';
+      h+='<p class="mc-real">Real token: '+(mcPinned?'<a class="tok inline" href="'+esc(fileHref(r.rl[0]))+'">'+real+'</a>':real)+'</p>'}
+    return h+(mcPinned?'<div class="mc-act"><a class="btn primary" href="'+esc(href(k))+'">Open file →</a>'+
+      '<button type="button" class="mini copy" data-copy="'+esc(k)+'">Copy CA</button><button type="button" class="mini star" data-star="'+esc(k)+
+      '" aria-pressed="false" aria-label="Add to watchlist">☆</button></div>':'<p class="mc-hint">'+(kb?'Enter opens':'Click for')+' the full file</p>')}
+  function famCard(i){var f=MX.f[i];if(!f)return '';var c={verified:0,scam:0,checking:0};
+    f.m.forEach(function(k){var s=(LIVE&&LIVE.t[k]&&LIVE.t[k].s)||'checking';c[s==='unverified'?'checking':s]++});
+    var sum=[c.verified?c.verified+' verified':'',c.scam?c.scam+' impersonator'+(c.scam>1?'s':''):'',c.checking?c.checking+' checking':'']
+      .filter(Boolean).join(' · ');
+    var rows=f.m.slice(0,8).map(function(k){var r=(LIVE&&LIVE.t[k])||{},x=MX.t[k]||{},s=r.s||'checking';
+      var cells='<i></i><span class="o">'+(x.o?ord(x.o):'')+'</span><span class="ag">'+(r.a?'#'+r.a:'Pons')+'</span>'+
+        '<span class="vs">'+LABEL[s]+'</span><span class="m">'+usd(r.m)+'</span>';
+      return '<li class="v-'+s+'">'+(mcPinned?'<a href="'+esc(href(k))+'">'+cells+'</a>':'<span class="row">'+cells+'</span>')+'</li>'}).join('');
+    return '<div class="mc-top"><span>Same ticker</span>'+closeBtn()+'</div><p class="mc-title"><b>$'+esc(f.s)+'</b><span class="nm">'+
+      f.m.length+' in the last 48 h'+(f.n>f.m.length?', '+f.n+' in all':'')+'</span></p><p class="mc-sum">'+sum+'</p><ol class="mc-fam">'+rows+'</ol>'+
+      (f.m.length>8?'<p class="mc-more">and '+(f.m.length-8)+' more in the ring</p>':'')+
+      (mcPinned?'':'<p class="mc-hint">In launch order, ranked among every token with the ticker. Click to keep this open.</p>')}
+  function light(f){MAP.classList.toggle('famfocus',f!=null);
+    MAP.querySelectorAll('[data-f]').forEach(function(x){x.classList.toggle(x.classList.contains('bub')?'hl':'on',f!=null&&x.dataset.f===f)})}
+  function anchor(el){var ring=el.classList.contains('famlabel')?MAP.querySelector('.fam[data-f="'+el.dataset.f+'"]'):el;
+    return (ring||el).querySelector('circle')||el}
+  function placeCard(){if(!mc||!mcFor)return;var a=anchor(mcFor).getBoundingClientRect(),vw=document.documentElement.clientWidth,
+    vh=window.innerHeight,w=mc.offsetWidth,h=mc.offsetHeight,g=10,x,y;
+    if(vw<600){x=(vw-w)/2;y=a.bottom+g+h<=vh-8||a.top-g-h<8?a.bottom+g:a.top-g-h}  // a phone: under the bubble, or over it
+    else{x=a.right+g+w<=vw-8?a.right+g:a.left-g-w>=8?a.left-g-w:(vw-w)/2;y=a.top+a.height/2-h/2}  // beside it, where there's room
+    x=Math.max(8,Math.min(vw-w-8,x));y=Math.max(8,Math.min(vh-h-8,y));
+    mc.style.left=Math.round(x+window.pageXOffset)+'px';mc.style.top=Math.round(y+window.pageYOffset)+'px'}
+  function renderCard(kb){if(!mc||!mcFor)return;
+    mc.innerHTML=mcFor.classList.contains('bub')?tokCard(mcFor.dataset.t,kb):famCard(mcFor.dataset.f);syncStars();placeCard()}
+  function showCard(el,pin,kb){clearTimeout(mcT);
+    if(!mc){mc=document.createElement('div');mc.className='mapcard';mc.id='mapcard';document.body.appendChild(mc)}
+    if(mcFor&&mcFor!==el)mcFor.classList.remove('cur');
+    mcFor=el;mcPinned=!!pin;el.classList.add('cur');
+    mc.classList.toggle('pinned',mcPinned);mc.setAttribute('role',mcPinned?'dialog':'tooltip');
+    if(mcPinned)mc.setAttribute('aria-label','Details');else mc.removeAttribute('aria-label');
+    light(el.dataset.f==null?null:el.dataset.f);renderCard(kb);mc.classList.add('on')}
+  function hideCard(){clearTimeout(mcT);if(!mc)return;mc.classList.remove('on','pinned');mcPinned=false;
+    if(mcFor)mcFor.classList.remove('cur');mcFor=null;light(null)}
+  function nearest(cx,cy,px){var best=null,bd=px;  // a phone shows the map at half size: a tap near a small bubble picks it
+    MAP.querySelectorAll('.bub:not(.dim)').forEach(function(b){var r=b.querySelector('circle').getBoundingClientRect(),
+      d=Math.hypot(cx-r.left-r.width/2,cy-r.top-r.height/2)-r.width/2;if(d<bd){bd=d;best=b}});return best}
+  if(MAP){
+    document.addEventListener('pointerdown',function(ev){ptr=ev.pointerType||'mouse'},true);
+    MAP.addEventListener('pointerover',function(ev){if(ev.pointerType!=='mouse'||mcPinned)return;var el=mapTarget(ev.target);if(!el)return;
+      if(el.classList.contains('fam')){light(el.dataset.f);return}  // inside a ring: light the family; the card waits for a bubble or the label
+      showCard(el,false)});
+    MAP.addEventListener('pointerout',function(ev){if(ev.pointerType!=='mouse'||mcPinned)return;var to=mapTarget(ev.relatedTarget);
+      if(!to||to.classList.contains('fam')){clearTimeout(mcT);mcT=setTimeout(function(){hideCard();if(to)light(to.dataset.f)},80)}});
+    MAP.addEventListener('click',function(ev){var el=mapTarget(ev.target),touch=ev.detail!==0&&ptr!=='mouse';
+      if(touch&&(!el||el.classList.contains('fam')))el=nearest(ev.clientX,ev.clientY,22)||el;
+      if(!el){if(mcPinned)hideCard();return}
+      if(el.classList.contains('bub')){if(!touch||(mcPinned&&mcFor===el))return;ev.preventDefault();showCard(el,true);return}
+      ev.preventDefault();showCard(el.classList.contains('fam')?MAP.querySelector('.famlabel[data-f="'+el.dataset.f+'"]')||el:el,true)});
+    MAP.addEventListener('focusin',function(ev){var el=mapTarget(ev.target),kb=false;try{kb=!!el&&el.matches(':focus-visible')}catch(e){}
+      if(kb&&!mcPinned)showCard(el,false,true)});
+    MAP.addEventListener('focusout',function(ev){if(!mcPinned&&!(mc&&mc.contains(ev.relatedTarget)))hideCard()});
+    MAP.addEventListener('keydown',function(ev){var el=mapTarget(ev.target);
+      if(el&&el.classList.contains('famlabel')&&(ev.key==='Enter'||ev.key===' ')){ev.preventDefault();showCard(el,true);
+        var a=mc.querySelector('.mc-fam a');if(a)a.focus()}});
+    document.addEventListener('keydown',function(ev){if(ev.key!=='Escape'||!mcFor)return;var back=mcFor,inside=mc.contains(document.activeElement);
+      hideCard();if(inside)back.focus()});
+    window.addEventListener('resize',placeCard);window.addEventListener('hashchange',hideCard)}
   function load(){if(!D.live||!window.fetch)return;fetch(D.live+(D.live.indexOf('?')<0?'?':'&')+'_='+Date.now(),{cache:'no-store'})
     .then(function(r){return r.ok?r.json():null}).then(function(j){if(j&&j.t){LIVE=j;apply()}}).catch(function(){})}
   var toastEl=document.querySelector('.toast'),toastT;
@@ -1488,11 +1667,12 @@ JS = r"""
   var q=document.getElementById('q'),res=document.getElementById('results'),idx=document.getElementById('idx');
   var all=idx?JSON.parse(idx.textContent):[];
   document.addEventListener('click',function(ev){
+    if(mcPinned&&(ev.target.closest('.mapcard .x')||!(mc.contains(ev.target)||MAP.contains(ev.target)))){hideCard();if(ev.target.closest('.mapcard'))return}
     var cp=ev.target.closest('[data-copy]');if(cp){ev.preventDefault();copyText(cp);return}
     var st=ev.target.closest('.star');if(st){ev.preventDefault();var wl=watchList(),k=st.dataset.star,i=wl.indexOf(k);
       if(i>=0)wl.splice(i,1);else wl.push(k);saveWatch(wl);syncStars();renderWatch();toast(i>=0?'Removed from your watchlist':'Added to your watchlist');return}
-    var fb=ev.target.closest('.filters button');if(fb){filterKey=fb.dataset.filter;
-      fb.parentNode.querySelectorAll('button').forEach(function(x){x.setAttribute('aria-pressed',x===fb?'true':'false')});applyFilter();return}
+    // the filter buttons, and the map's legend, which toggles: a second click on the same key shows everything again
+    var fb=ev.target.closest('[data-filter]');if(fb){var k=fb.dataset.filter;setFilter(fb.closest('.maplegend')&&filterKey===k?'all':k);return}
     var sb=ev.target.closest('th[data-sort] button');if(sb){sortBy(sb.parentNode);return}
     if(res&&!res.contains(ev.target)&&ev.target!==q)res.hidden=true});
   document.querySelectorAll('.filter').forEach(function(f){f.addEventListener('input',function(){
