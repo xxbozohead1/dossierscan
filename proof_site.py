@@ -228,12 +228,15 @@ def header(up: str = "") -> str:
             f'<nav aria-label="Sections">{nav}</nav></div></header>')
 
 
+SOURCE_URL = "https://github.com/xxbozohead1/dossierscan"  # the public half: this site, the whitepaper, the server setup
+
+
 def footer(feed: dict, up: str = "") -> str:
     bot = bot_username()
     report = f' Wrong verdict? <a href="https://t.me/{bot}" rel="noopener" target="_blank">Tell us</a>.' if bot else ""
     return f"""<footer class="foot"><div class="wrap">
 <p>Method <a href="{up}method.html">{e(feed["method"])}</a> · numbers updated <span data-l="net_at">—</span> ·
-<a href="{up}api.html">API</a></p>
+<a href="{up}api.html">API</a> · <a href="{SOURCE_URL}" rel="noopener" target="_blank">Source</a></p>
 <p class="muted">{NAME} checks who claims a token and what the project behind it is doing. Verdicts are automated from public
 posts and pages: one can change, or be wrong, so check its receipt before you trade.{report} Market numbers come from Orbio's
 public API and are shown for context: they never change a verdict or a score. Nothing here is financial advice.</p></div></footer>"""
@@ -941,7 +944,7 @@ def ledger(d: dict, feed: dict) -> str:
         rows += [("AI balance credited by fees", usd(tr.get("balance_usdg"))), ("Checks paid since launch", f'{d.get("compute_since_launch") or 0:.2f} CREDIT'),
                  ("Compute runway, estimated", runway), ("ORBIO staked", num(tr.get("staked_orbio"), "ORBIO")),
                  ("CREDIT earned by the stake", f'{(tr.get("credit_owed") or 0) + (tr.get("credit_claimed") or 0):.2f}'),
-                 ("ORBIO withdrawn for buybacks", num(tr.get("withdrawn_orbio") or 0, "ORBIO")),
+                 ("Stake withdrawn (policy: never)", num(tr.get("withdrawn_orbio") or 0, "ORBIO")),
                  ("Pass revenue", rev_s), ("Burned (dead address)", "—" if burned is None else num(burned, "$DOSSIER"))]
         due = (rev or 0) * BURN_SHARE - (burned or 0)
         check = (f'<p class="behind">Burns are behind: {e(num(due, "$DOSSIER"))} of pass revenue still to burn.</p>' if rev and due > 0

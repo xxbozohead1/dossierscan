@@ -16,8 +16,8 @@ Every trade of an Orbio launch pays a creator fee. Orbio's contracts split it th
   on Orbio's tools and models. That is what a verdict costs: reading a project's X posts, fetching its website, and
   pulling out what it claims to have built.
 - **50% is staked as ORBIO,** and the stake earns CREDIT. The CREDIT goes to compute first. Once the AI balance covers
-  90 days of checks, claimed CREDIT is sold to buy back and burn $DOSSIER. After Orbio's 10-day lock, the staked
-  ORBIO itself is withdrawn over time for the same buybacks and burns.
+  90 days of checks, claimed CREDIT is sold to buy back and burn $DOSSIER. The staked ORBIO itself is never withdrawn:
+  it stays staked for good and keeps earning, and the ledger shows it.
 - **5% goes to Orbio's launchpad treasury.**
 
 ## What the compute pays for
