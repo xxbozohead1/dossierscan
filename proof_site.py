@@ -2067,6 +2067,10 @@ def serve(port: int, folder: Path = OUT) -> None:
     import http.server
 
     class Handler(http.server.SimpleHTTPRequestHandler):
+        def end_headers(self):  # a dev server: every reload checks for a new build, never a cached old page
+            self.send_header("Cache-Control", "no-cache")
+            super().end_headers()
+
         def send_error(self, code, message=None, explain=None):
             page = folder / "404.html"
             if code != 404 or not page.exists():
