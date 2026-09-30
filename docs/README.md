@@ -24,9 +24,12 @@ checks harder to game. The rules themselves are the same for every token, $DOSSI
 
 ## $DOSSIER
 
-Dossier's token, launched on the Orbio launchpad. Its trading fees pay for the checks. The official contract is
-published at [dossierscan.com/token.html](https://dossierscan.com/token.html); any other address using the name is an
-impersonator.
+Dossier's token, launched on the Orbio launchpad (agent #282). Its trading fees pay for the checks.
+
+**Official contract: `0xe4d41dfec020cf616c3b4c7b805cba9ad9a82878`**
+
+It's also published at [dossierscan.com/token.html](https://dossierscan.com/token.html). Any other address using the
+name is an impersonator.
 
 ## Data
 
