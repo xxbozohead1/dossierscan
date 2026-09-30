@@ -1,0 +1,17 @@
+# The launch watcher: new Orbio launches, builder X posts, Build Week winners, Telegram alerts.
+# Installed by deploy/setup.sh, which replaces /opt/orbio with the checkout's real path.
+[Unit]
+Description=Orbio launch watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=orbio
+WorkingDirectory=/opt/orbio
+# the runner restarts Python itself and holds the one-copy lock; systemd restarts the runner
+ExecStart=/bin/sh /opt/orbio/run_watch.sh
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

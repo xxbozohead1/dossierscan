@@ -1,0 +1,17 @@
+# The Proof indexer: verdicts, the Dossier site (data/site), the public channel and the daily digest.
+# Installed by deploy/setup.sh, which replaces /opt/orbio with the checkout's real path.
+[Unit]
+Description=Dossier proof indexer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=orbio
+WorkingDirectory=/opt/orbio
+# the runner restarts Python itself and holds the one-copy lock; systemd restarts the runner
+ExecStart=/bin/sh /opt/orbio/run_proof.sh
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

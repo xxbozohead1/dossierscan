@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import functools
 import hashlib
 import html
 import json
@@ -228,11 +229,14 @@ def header(up: str = "") -> str:
 
 
 def footer(feed: dict, up: str = "") -> str:
+    bot = bot_username()
+    report = f' Wrong verdict? <a href="https://t.me/{bot}" rel="noopener" target="_blank">Tell us</a>.' if bot else ""
     return f"""<footer class="foot"><div class="wrap">
 <p>Method <a href="{up}method.html">{e(feed["method"])}</a> · numbers updated <span data-l="net_at">—</span> ·
 <a href="{up}api.html">API</a></p>
-<p class="muted">{NAME} checks who claims a token and what the project behind it is doing. Market numbers come from Orbio's public
-API and are shown for context: they never change a verdict or a score. Nothing here is financial advice.</p></div></footer>"""
+<p class="muted">{NAME} checks who claims a token and what the project behind it is doing. Verdicts are automated from public
+posts and pages: one can change, or be wrong, so check its receipt before you trade.{report} Market numbers come from Orbio's
+public API and are shown for context: they never change a verdict or a score. Nothing here is financial advice.</p></div></footer>"""
 
 
 def inert(s: str) -> str:
@@ -240,19 +244,58 @@ def inert(s: str) -> str:
     return s.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
-def page(title: str, body: str, feed: dict, depth: int = 0, desc: str = "") -> str:
-    up = "../" * depth
+DESC = "Which Orbio launch is the real one? A file on every agent, with receipts."
+OG_IMAGE = ROOT / "static" / "og.png"  # the link-preview card, 1200x630
+
+
+def site_url() -> str:
+    """Where the site is hosted (DOSSIER_SITE_URL), for the absolute links that link previews and sitemaps need."""
+    u = os.environ.get("DOSSIER_SITE_URL", "").strip().rstrip("/")
+    return u if re.fullmatch(r"https?://[^\s\"'<>]+", u) else ""
+
+
+def share_tags(title: str, desc: str, path: str | None) -> str:
+    """Open Graph and X card tags, so a link pasted on X or Telegram shows a card rather than a bare URL. `path` is the
+    page's path from the site root (None: a page with no address of its own, the 404)."""
+    site = site_url()
+    tags = ['<meta property="og:type" content="website">', f'<meta property="og:site_name" content="{NAME}">',
+            f'<meta property="og:title" content="{e(title)}">', f'<meta property="og:description" content="{e(desc)}">']
+    if site and path is not None:
+        url = f"{site}/{'' if path == 'index.html' else path}"
+        tags += [f'<link rel="canonical" href="{e(url)}">', f'<meta property="og:url" content="{e(url)}">']
+    if site and OG_IMAGE.exists():
+        tags += [f'<meta property="og:image" content="{e(site)}/assets/og.png">', '<meta property="og:image:width" content="1200">',
+                 '<meta property="og:image:height" content="630">', '<meta name="twitter:card" content="summary_large_image">']
+    else:
+        tags.append('<meta name="twitter:card" content="summary">')
+    if path is None:
+        tags.append('<meta name="robots" content="noindex">')
+    return "".join(tags)
+
+
+@functools.cache
+def asset_version() -> str:
+    """Changes with the stylesheet or the script, so a browser or CDN never pairs new pages with a stale copy."""
+    return hashlib.sha256((CSS + JS).encode()).hexdigest()[:10]
+
+
+def page(title: str, body: str, feed: dict, depth: int = 0, desc: str = "", path: str | None = "",
+         root: str | None = None) -> str:
+    """One page. Links are relative (`depth` folders down), except with `root`: the 404 page is served at whatever
+    address was asked for, so its links start from the site root instead."""
+    up = root if root is not None else "../" * depth
+    v = asset_version()
     cfg = inert(json.dumps({"href": f"{up}t/{{t}}.html", "live": os.environ.get("DOSSIER_LIVE_URL") or f"{up}api/v1/live.json"}))
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>{e(title)}</title><meta name="description" content="{e(desc or 'Which Orbio launch is the real one? A file on every agent, with receipts.')}">
+<title>{e(title)}</title><meta name="description" content="{e(desc or DESC)}">{share_tags(title, desc or DESC, path)}
 <link rel="icon" href="{FAVICON}"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="{FONTS}"><link rel="stylesheet" href="{up}assets/style.css"></head>
+<link rel="stylesheet" href="{FONTS}"><link rel="stylesheet" href="{up}assets/style.css?v={v}"></head>
 <body>{header(up)}
 <main class="wrap">{body}</main>
 {footer(feed, up)}
 <div class="toast" role="status" aria-live="polite" hidden></div>
-<script>window.DOSSIER={cfg};</script><script src="{up}api/v1/live.js"></script><script src="{up}assets/app.js"></script></body></html>
+<script>window.DOSSIER={cfg};</script><script src="{up}api/v1/live.js"></script><script src="{up}assets/app.js?v={v}"></script></body></html>
 """
 
 
@@ -322,8 +365,8 @@ def signature(feed: dict) -> str:
     """Changes when anything a page shows changes, apart from the live numbers: deploy on this, not on the clock."""
     now = feed["generated_at"]
     static = [{**{k: v for k, v in t.items() if k not in LIVE_KEYS}, "_state": state_of(t, now)} for t in feed["tokens"]]
-    blob = json.dumps({"speed": feed.get("speed"), "method": feed.get("method"), "bot": bot_username(), "tokens": static},
-                      sort_keys=True, default=str)
+    blob = json.dumps({"speed": feed.get("speed"), "method": feed.get("method"), "bot": bot_username(), "site": site_url(),
+                       "assets": asset_version(), "tokens": static}, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 
@@ -353,8 +396,10 @@ def home(feed: dict) -> str:
                       f'<span>{n}</span></button>' for k, label, n in (
                           ("all", "All", len(recent)), ("verified", "Verified", counts["verified"]),
                           ("checking", "Checking", counts["checking"] + counts["unverified"]), ("scam", "Impersonators", counts["scam"])))
+    # scams also holds copies launched straight on Pons, off the launchpad: next to the agent count, count agents only
+    orbio_scams = sum(1 for t in scams if t.get("orbio_agent"))
     tally = [(e(len(orbio)), "Orbio agents on file"), (e(verified), "verified by their project"),
-             (e(len(scams)), "impersonators caught")]
+             (e(orbio_scams), "Orbio impersonators caught")]
     sp = feed.get("speed") or {}
     for kind, label in (("verified", "median time to verify a real project"), ("flagged", "median time to expose an impersonator")):
         if (sp.get(kind) or {}).get("n", 0) >= 3:  # fewer launches than that isn't a figure worth printing
@@ -391,7 +436,7 @@ placeholder="Paste a contract address or type a ticker" autocomplete="off" spell
 <p class="sub">Tokens that copy a real project's name and socials. Each one links the post or page that exposes it, and
 the real token when the project has launched one.</p></div></div>
 {scam_list(scams[:10], now)}
-<p class="more"><a href="scams.html">All {len(scams)} impersonators →</a></p></section>
+<p class="more"><a href="scams.html">All {len(scams)} impersonators →</a> <span class="muted">{scam_split(scams)}</span></p></section>
 
 <section id="how"><h2>How {NAME} decides</h2><div class="how">
 <div>{chip("verified")}<p>{STATE_TEXT["verified"]} Social links in the token's metadata count for nothing: anyone can copy them.</p></div>
@@ -469,12 +514,30 @@ Orbio AgentVault. Tap a column to sort.</p></section>
 <div class="scroll"><table class="list sortable"><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table></div>"""
 
 
+def not_found_page() -> str:
+    """The 404. A token address with no file gets its own message: brand-new Orbio agents are on file within a minute,
+    other tokens only once a project claims them."""
+    return f"""<section class="page-head notfound"><h1>No file here</h1>
+<p class="sub" id="nf">This page doesn't exist. The link may be mistyped, or out of date.</p>
+<p class="more"><a href="/index.html#live">New launches</a> · <a href="/agents.html">Every Orbio agent</a> ·
+<a href="/scams.html">Impersonators</a></p></section>
+<script>(function(){{var m=location.pathname.match(/\\/t\\/(0x[0-9a-fA-F]{{40}})(\\.html)?$/);if(!m)return;var a=m[1].toLowerCase();
+document.getElementById('nf').innerHTML='{NAME} has no file on <code>'+a+'</code> yet. New Orbio agents get one within a minute '+
+'of launch; other tokens only once a project claims them. <a href="{EXPLORER}/token/'+a+'" rel="nofollow noopener" '+
+'target="_blank">See it on the explorer</a>.'}})();</script>"""
+
+
+def scam_split(scams: list[dict]) -> str:
+    n = sum(1 for t in scams if t.get("orbio_agent"))
+    return f"{n} launched on Orbio, {len(scams) - n} elsewhere on Robinhood Chain"
+
+
 def scams_page(feed: dict) -> str:
     now = feed["generated_at"]
     scams = sorted((t for t in feed["tokens"] if t["verdict"]["verdict"] == "scam"), key=lambda t: -(t["launched_at"] or 0))
     return f"""<section class="page-head"><h1>Impersonators caught</h1><p class="sub">{len(scams)} tokens that copy a real
-project's identity. A token is marked an impersonator only when an official channel lists a different contract, or says the
-token isn't theirs.</p></section>
+project's identity: {scam_split(scams)}. Orbio agents show their number (#). A token is marked an impersonator only when an
+official channel lists a different contract, or says the token isn't theirs.</p></section>
 <input class="filter" type="search" placeholder="Filter by ticker, name or address" aria-label="Filter impersonators">
 {scam_list(scams, now, searchable=True)}"""
 
@@ -1130,7 +1193,7 @@ def build(feed: dict, out: Path = OUT) -> int:
     (tmp / "assets" / "app.js").write_text(JS.strip() + "\n", "utf-8")
 
     def put(rel: str, title: str, body: str, depth: int = 0, desc: str = "") -> None:
-        (tmp / rel).write_text(page(title, body, feed, depth, desc), "utf-8")
+        (tmp / rel).write_text(page(title, body, feed, depth, desc, path=rel), "utf-8")
 
     now = feed["generated_at"]
     ON_FILE.clear()
@@ -1140,6 +1203,16 @@ def build(feed: dict, out: Path = OUT) -> int:
     put("scams.html", f"Impersonators caught · {NAME}", scams_page(feed))
     put("method.html", f"Method · {NAME}", method_page(), desc="How Dossier decides which tokens are real.")
     put("api.html", f"API · {NAME}", api_page(feed))
+    # served by the host for any address with no file (Cloudflare Pages would otherwise serve the home page)
+    (tmp / "404.html").write_text(page(f"No file here · {NAME}", not_found_page(), feed, path=None, root="/"), "utf-8")
+    if OG_IMAGE.exists():
+        shutil.copyfile(OG_IMAGE, tmp / "assets" / "og.png")
+    site = site_url()
+    (tmp / "robots.txt").write_text("User-agent: *\nAllow: /\n" + (f"Sitemap: {site}/sitemap.xml\n" if site else ""), "utf-8")
+    if site:
+        pages = ["", "agents.html", "scams.html", "method.html", "api.html"] + [f't/{t["token"]}.html' for t in feed["tokens"]]
+        (tmp / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+                                         + "".join(f"<url><loc>{e(site)}/{p}</loc></url>\n" for p in pages) + "</urlset>\n", "utf-8")
     for t in feed["tokens"]:
         s = STATE[state_of(t, now)]
         put(f't/{t["token"]}.html', f'${t["symbol"]}: {s} · {NAME}', token_page(t, feed), depth=1,
@@ -1233,12 +1306,36 @@ def build_single(feed: dict, name: str = NAME) -> str:
         NAME = saved
 
 
+def serve(port: int, folder: Path = OUT) -> None:
+    """Preview the built site the way the host serves it: an address with no file gets 404.html, with a 404."""
+    import http.server
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def send_error(self, code, message=None, explain=None):
+            page = folder / "404.html"
+            if code != 404 or not page.exists():
+                return super().send_error(code, message, explain)
+            body = page.read_bytes()
+            self.send_response(404)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+
+    print(f"serving {folder} on http://127.0.0.1:{port}", flush=True)
+    http.server.ThreadingHTTPServer(("127.0.0.1", port), functools.partial(Handler, directory=str(folder))).serve_forever()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Build Dossier, the public site, from the index")
     ap.add_argument("--out", type=Path, default=OUT, help=f"output folder (default {OUT})")
     ap.add_argument("--single", type=Path, help="also write the whole site as one page to this file (a preview)")
     ap.add_argument("--name", default=NAME, help="the site's name in the one-page build")
+    ap.add_argument("--serve", type=int, metavar="PORT", help="don't build: preview the built site on localhost:PORT")
     args = ap.parse_args()
+    if args.serve:
+        return serve(args.serve, args.out)
     import proof_index as p  # here, not at the top: the indexer imports this module to rebuild the site
     w.load_env()
     w.load_xlinks()

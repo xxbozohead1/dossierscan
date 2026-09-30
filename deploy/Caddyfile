@@ -1,0 +1,34 @@
+# Dossier, served from this server behind Cloudflare's proxy (the orange cloud).
+# Visitors get Cloudflare's certificate; between Cloudflare and this server, a Cloudflare Origin certificate
+# (Cloudflare SSL/TLS mode "Full (strict)"). deploy/setup.sh replaces dossier.example.com and /opt/orbio.
+dossier.example.com {
+	tls /etc/caddy/cf-origin.pem /etc/caddy/cf-origin-key.pem
+	root * /opt/orbio/data/site
+	encode zstd gzip
+	file_server
+
+	# the free API: readable from any site
+	header /api/* Access-Control-Allow-Origin "*"
+	# the numbers every page polls each minute
+	@live path /api/v1/live.json /api/v1/live.js
+	header @live Cache-Control "public, max-age=15"
+	# stylesheet and script URLs carry a content hash (?v=), so a copy never goes stale
+	header /assets/* Cache-Control "public, max-age=31536000, immutable"
+	@pages path / *.html
+	header @pages Cache-Control "public, max-age=60"
+
+	# only data/site is served: the index's database, logs and .env sit outside the root
+	handle_errors {
+		@missing expression {err.status_code} == 404
+		handle @missing {
+			rewrite * /404.html
+			file_server
+		}
+	}
+}
+
+# www. goes to the bare domain (needs a proxied CNAME www -> the domain; the origin certificate covers *.domain)
+www.dossier.example.com {
+	tls /etc/caddy/cf-origin.pem /etc/caddy/cf-origin-key.pem
+	redir https://dossier.example.com{uri} permanent
+}
