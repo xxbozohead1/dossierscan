@@ -101,6 +101,9 @@ def receipt_text(url: str) -> str:
     m = re.match(r"https?://(?:www\.)?(?:x|twitter)\.com/(\w+)/status/\d+", url or "")
     if m:
         return f"@{m.group(1)}'s post on X"
+    m = re.fullmatch(r"https?://(?:www\.)?(?:x|twitter)\.com/(\w+)/?", url or "")
+    if m:  # an account that shows the contract in its bio: the profile is the receipt
+        return f"@{m.group(1)}'s bio on X"
     bare = re.sub(r"^https?://(www\.)?", "", url or "").rstrip("/")
     return bare if len(bare) <= 40 else bare[:38] + "…"
 
