@@ -435,9 +435,17 @@ def pack(radii: list[float], gap: float = 3.0, angles: int = 18) -> list[tuple[f
     return [(x, y) for x, y, _ in placed]
 
 
-def bubble_r(t: dict) -> float:
-    """Radius by market cap (area follows it), from 8 for an untraded token to 44."""
-    m = (t.get("market") or {}).get("mcap_usd") or 0
+def start_mcap(ts: list[dict]) -> float:
+    """What every launch is worth before anyone buys (the curve's starting reserve, at today's ORBIO price): the
+    market cap of the curves still at 0%. About $6.8k on 2026-10-01; 0 when no such curve is known."""
+    return min((m["mcap_usd"] for t in ts if (m := t.get("market") or {}).get("mcap_usd")
+                and m.get("curve_pct") == 0 and not m.get("graduated")), default=0.0)
+
+
+def bubble_r(t: dict, base: float = 0.0) -> float:
+    """Radius by market cap above where every launch starts (area follows it), from 8 for an untraded token to 44.
+    Raw market cap would draw every untraded launch at the same middling size."""
+    m = max(0.0, ((t.get("market") or {}).get("mcap_usd") or 0) - base)
     return max(8.0, min(44.0, 7 + 4.2 * math.sqrt(m / 1000)))
 
 
@@ -529,7 +537,7 @@ def orb(x: float, y: float, r: float) -> str:
             f'<circle class="glint" cx="{x - r * .5:.1f}" cy="{y - r * .36:.1f}" r="{max(.8, r * .06):.1f}"/>')
 
 
-def launch_map(ts: list[dict], now: int) -> str:
+def launch_map(ts: list[dict], now: int, base: float = 0.0) -> str:
     """Every launch of the last 48 hours as a bubble: sized by market cap, coloured by verdict, and tokens sharing a
     ticker packed inside one ring, so the real one (or the lack of one) shows among its copies at a glance. The page
     script adds the interaction: a card with each bubble's numbers, a ticker's family lit up together, and the legend
@@ -541,8 +549,8 @@ def launch_map(ts: list[dict], now: int) -> str:
         fams.setdefault((t["symbol"] or "?").upper(), []).append(t)
     items = []  # (radius, [(token, dx, dy, r)], ticker or None)
     for sym, members in fams.items():
-        members.sort(key=lambda t: -bubble_r(t))
-        rs = [bubble_r(t) for t in members]
+        members.sort(key=lambda t: -bubble_r(t, base))
+        rs = [bubble_r(t, base) for t in members]
         if len(members) == 1:
             items.append((rs[0], [(members[0], 0.0, 0.0, rs[0])], None))
             continue
@@ -558,7 +566,7 @@ def launch_map(ts: list[dict], now: int) -> str:
     x0, y0 = min(xs) - 6, min(ys) - 6
     w, h = max(xs) - x0 + 6, max(ys) - y0 + 6
     out, labels = [], []
-    extra: dict = {"t": {}, "f": []}  # per token: the card's notes and ticker rank; per ring: its members in launch order
+    extra: dict = {"t": {}, "f": [], "b": round(base)}  # per token: notes, ticker rank; per ring: members; b: sizes' base
     # each lone bubble, or each ring with its bubbles, is one body: drawn around (0, 0) and put in place by a translate,
     # so the page script can float, push, drag and fling it by changing that alone (data-x/y: its place in the layout)
     for (fx, fy), (R, inner, sym) in zip(centres, items):
@@ -599,7 +607,7 @@ def launch_map(ts: list[dict], now: int) -> str:
     return (f'<figure class="lmapbox"><svg class="lmap" viewBox="0 0 {w:.0f} {h:.0f}" role="group" '
             f'aria-label="Map of the last 48 hours of Orbio launches, by verdict">{orb_defs()}{aura}'
             f'<g class="bodies">{"".join(out)}</g><g class="labels">{"".join(labels)}</g></svg>'
-            f'<figcaption class="maplegend">{legend}<span class="muted">Size: market cap · paler: older, gone after 48 h · '
+            f'<figcaption class="maplegend">{legend}<span class="muted">Size: market cap above where every launch starts · paler: older, gone after 48 h · '
             'a ring holds the tokens sharing a ticker · a pulse: launched in the last hour · <span class="on-hover">point '
             'at a bubble for its numbers, click for its file, drag to fling it</span><span class="on-touch">tap a bubble '
             f'for its numbers, tap again for its file</span></span></figcaption><script type="application/json" id="mapx">'
@@ -664,7 +672,7 @@ placeholder="Paste a contract address or type a ticker" autocomplete="off" spell
 <section id="live"><div class="sec-head"><div><h2>New on Orbio</h2>
 <p class="sub">Every agent launched in the last 48 hours, newest first. New launches and verdicts appear here as they land.</p></div>
 <div class="filters" role="group" aria-label="Show">{filters}</div></div>
-{launch_map(recent, now)}
+{launch_map(recent, now, start_mcap(toks))}
 {feed_cards(recent, now)}
 <p class="more"><a href="agents.html">Every Orbio agent on file →</a></p></section>
 
@@ -1814,7 +1822,7 @@ JS = r"""
     return best}
   function spawnNew(){if(!LIVE||!BODY.length)return;var t=now(),n=0;
     Object.keys(LIVE.t).forEach(function(k){var r=LIVE.t[k];if(n>=6||ONMAP[k]||!r.a||!r.lt||t-r.lt>6*3600)return;
-      var rr=Math.max(8,Math.min(44,7+4.2*Math.sqrt((r.m||0)/1000))),p=freeSpot(rr);ONMAP[k]=1;if(!p)return;n++;
+      var rr=Math.max(8,Math.min(44,7+4.2*Math.sqrt(Math.max(0,(r.m||0)-(MX.b||0))/1000))),p=freeSpot(rr);ONMAP[k]=1;if(!p)return;n++;
       var s=r.s||'checking',g=document.createElementNS(NS,'g');g.setAttribute('class','body');
       g.innerHTML='<a class="bub born v-'+s+'" href="'+esc(href(k))+'" data-t="'+esc(k)+'" data-state="'+(s==='unverified'?'checking':s)+
         '" aria-label="$'+esc(r.sym||'?')+' #'+esc(r.a)+' · '+LABEL[s]+'">'+orbSVG(0,0,rr)+(rr>=17?'<text class="d" x="0" y="0" style="font-size:'+
@@ -2100,6 +2108,7 @@ def main() -> None:
     if args.serve:
         return serve(args.serve, args.out)
     import proof_index as p  # here, not at the top: the indexer imports this module to rebuild the site
+    p.CURVES_PER_PASS = 1000  # one build, no next pass to fill in the rest: read every curve now
     w.load_env()
     w.load_xlinks()
     t0 = time.time()
