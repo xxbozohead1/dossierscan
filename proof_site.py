@@ -96,6 +96,15 @@ def link(url: str, text: str | None = None, cls: str = "") -> str:
     return f'<a{c} href="{e(url)}" rel="nofollow noopener" target="_blank">{e(text or url.split("://", 1)[1].rstrip("/"))}</a>'
 
 
+def receipt_text(url: str) -> str:
+    """A receipt's link text: "@handle's post on X" for a post, else the address, shortened."""
+    m = re.match(r"https?://(?:www\.)?(?:x|twitter)\.com/(\w+)/status/\d+", url or "")
+    if m:
+        return f"@{m.group(1)}'s post on X"
+    bare = re.sub(r"^https?://(www\.)?", "", url or "").rstrip("/")
+    return bare if len(bare) <= 40 else bare[:38] + "…"
+
+
 def sentence(s: str) -> str:
     """The verdict reasons are lowercase clauses (Telegram alerts embed them); a page shows them as sentences."""
     s = (s or "").strip()
@@ -461,7 +470,7 @@ def launch_map(ts: list[dict], now: int) -> str:
             out.append(f'<g class="fam"><circle cx="{fx - x0:.1f}" cy="{fy - y0:.1f}" r="{R:.1f}"/></g>')
             text = f"${sym} ×{len(inner)}"
             pw = 6.4 * len(text) + 14
-            labels.append(f'<g class="famlabel"><rect x="{fx - x0 - pw / 2:.1f}" y="{fy - y0 - R - 9:.1f}" width="{pw:.1f}" '
+            labels.append(f'<g class="famlabel{" pair" if len(inner) < 3 else ""}"><rect x="{fx - x0 - pw / 2:.1f}" y="{fy - y0 - R - 9:.1f}" width="{pw:.1f}" '
                           f'height="18" rx="9"/><text x="{fx - x0:.1f}" y="{fy - y0 - R:.1f}">{e(text)}</text></g>')
         for t, dx, dy, r in inner:
             s = state_of(t, now)
@@ -469,8 +478,10 @@ def launch_map(ts: list[dict], now: int) -> str:
             mc = (t.get("market") or {}).get("mcap_usd")
             tip = f'${t["symbol"] or "?"}' + (f' #{t["orbio_agent"]}' if t.get("orbio_agent") else "") + f" · {STATE[s]}" \
                 + (f" · {usd(mc)} market cap" if mc else "")
-            label = (f'<text x="{x:.1f}" y="{y:.1f}" style="font-size:{min(13, r * .42):.1f}px">'
+            label = (f'<text class="d" x="{x:.1f}" y="{y:.1f}" style="font-size:{min(13, r * .42):.1f}px">'
                      f'{e((t["symbol"] or "?")[:7])}</text>') if r >= 17 else ""
+            if r >= 30:  # a phone shows the map at about half size: only big bubbles get a (bigger) label there
+                label += f'<text class="m" x="{x:.1f}" y="{y:.1f}">{e((t["symbol"] or "?")[:int(2 * r * .85 / 10.8)])}</text>'
             out.append(f'<a class="bub v-{s}" href="t/{t["token"]}.html" data-t="{t["token"]}" '
                        f'data-state="{"checking" if s == "unverified" else s}"><title>{e(tip)}</title>'
                        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r:.1f}"/>{label}</a>')
@@ -590,11 +601,11 @@ def feed_cards(ts: list[dict], now: int, up: str = "") -> str:
 def board_table(board: list[dict], now: int, up: str = "") -> str:
     rows = "".join(f"""<tr data-t="{t["token"]}"><td class="num">{i}</td><td>{tref(t, up)}</td><td>{status_chip(t["status"])}</td>
 <td class="score">{(t["scores"] or {}).get("composite") or 0:.0f}</td><td class="hide-sm">{bars(t["scores"])}</td>
-<td class="numcol">{ph("mcap")}</td><td class="numcol hide-sm">{ph("vol")}</td><td class="hide-sm">{ph("curve")}</td>
-<td><span data-l="chip">{chip(state_of(t, now))}</span></td></tr>""" for i, t in enumerate(board, 1))
+<td class="numcol hide-sm">{ph("mcap")}</td><td class="numcol hide-sm">{ph("vol")}</td><td class="hide-sm">{ph("curve")}</td>
+<td class="hide-sm"><span data-l="chip">{chip(state_of(t, now))}</span></td></tr>""" for i, t in enumerate(board, 1))
     return f"""<div class="scroll"><table class="list"><thead><tr><th class="num">#</th><th>Token</th><th>Status</th>
-<th class="score">Score</th><th class="hide-sm">Product · Build · Team · Work · Integrity</th><th class="numcol">Mkt cap</th>
-<th class="numcol hide-sm">24h vol</th><th class="hide-sm">Curve</th><th>Official</th></tr></thead><tbody>{rows}</tbody></table></div>"""
+<th class="score">Score</th><th class="hide-sm">Product · Build · Team · Work · Integrity</th><th class="numcol hide-sm">Mkt cap</th>
+<th class="numcol hide-sm">24h vol</th><th class="hide-sm">Curve</th><th class="hide-sm">Official</th></tr></thead><tbody>{rows}</tbody></table></div>"""
 
 
 def scam_list(ts: list[dict], now: int, up: str = "", searchable: bool = False) -> str:
@@ -622,13 +633,13 @@ def agents_page(feed: dict) -> str:
     orbio = sorted((t for t in feed["tokens"] if t.get("orbio_agent")), key=lambda t: -(t["orbio_agent"] or 0))
     rows = "".join(f"""<tr data-t="{t["token"]}" data-lt="{t["launched_at"] or 0}" data-sym="{e((t["symbol"] or "").lower())}"
 data-state="{state_of(t, now)}" data-search="{e(search_key(t))}"><td>{tref(t)}</td><td><span data-l="chip">{chip(state_of(t, now))}</span></td>
-<td>{status_chip(t["status"])}</td><td class="numcol">{ph("mcap")}</td><td class="numcol hide-sm">{ph("vol")}</td>
+<td class="hide-sm">{status_chip(t["status"])}</td><td class="numcol">{ph("mcap")}</td><td class="numcol hide-sm">{ph("vol")}</td>
 <td class="hide-sm">{ph("curve")}</td><td class="hide-sm muted">{when(t["launched_at"])}</td>
-<td class="star-cell"><button type="button" class="mini star" data-star="{t["token"]}" aria-pressed="false" aria-label="Add to watchlist">☆</button></td></tr>"""
+<td class="star-cell hide-sm"><button type="button" class="mini star" data-star="{t["token"]}" aria-pressed="false" aria-label="Add to watchlist">☆</button></td></tr>"""
                    for t in orbio)
-    head = (sort_th("name", "Token") + sort_th("verdict", "Official") + "<th>Status</th>" + sort_th("mcap", "Mkt cap", "numcol")
+    head = (sort_th("name", "Token") + sort_th("verdict", "Official") + '<th class="hide-sm">Status</th>' + sort_th("mcap", "Mkt cap", "numcol")
             + sort_th("vol", "24h vol", "numcol hide-sm") + sort_th("curve", "Curve", "hide-sm")
-            + sort_th("age", "Launched", "hide-sm") + '<th><span class="sr">Watch</span></th>')
+            + sort_th("age", "Launched", "hide-sm") + '<th class="hide-sm"><span class="sr">Watch</span></th>')
     return f"""<section class="page-head"><h1>Every Orbio agent on file</h1><p class="sub">{len(orbio)} agents launched through the
 Orbio AgentVault. Tap a column to sort.</p></section>
 <input class="filter" type="search" placeholder="Filter by ticker, name or address" aria-label="Filter agents">
@@ -698,7 +709,7 @@ def token_page(t: dict, feed: dict) -> str:
 <header class="file-head"><div class="who"><h1><span class="tkr">${e(t["symbol"] or "?")}</span> <span class="nm">{e(t["name"] or "")}</span></h1>
 <p class="meta">Launched {when(t["launched_at"])}{f' by {link(EXPLORER + "/address/" + t["creator"], short(t["creator"]))}' if t.get("creator") else ""} {badges}</p>
 <p class="ca"><code>{addr}</code><button type="button" class="copy" data-copy="{addr}">Copy</button>
-<button type="button" class="copy star big" data-star="{addr}" aria-pressed="false">☆ Watch</button></p></div>
+<button type="button" class="copy star watch" data-star="{addr}" aria-pressed="false">☆ Watch</button></p></div>
 <div class="stampbox"><span class="stamp big v-{s}">{STATE[s]}</span><span class="stampnote">{e(note)}</span></div></header>
 <div class="actions">{"".join(actions)}</div>
 <dl class="keynums">{"".join(f"<div><dt>{e(k)}</dt><dd>{ph(key)}</dd></div>" for k, key in keynums)}</dl>
@@ -728,7 +739,7 @@ def fmt_span(secs: int | None) -> str:
 def verdict_block(t: dict, s: str) -> str:
     v = t["verdict"]
     rel = t.get("related") or {}
-    receipts = "".join(f"<li>{link(u)}</li>" for u in v["receipts"])
+    receipts = "".join(f"<li>{link(u, receipt_text(u))}</li>" for u in v["receipts"])
     extra = ""
     real = [r for r in rel.get("claimed") or [] if r["token"] != t["token"]]
     if s == "scam" and real:
@@ -1314,6 +1325,7 @@ th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] bu
 .lmap .bub:hover circle,.lmap .bub:focus circle{stroke-width:4}.lmap .bub.dim{opacity:.16}
 .lmap .bub text{fill:var(--st);font-family:var(--mono);font-weight:600;text-anchor:middle;dominant-baseline:central;pointer-events:none}
 .lmap .fam circle{fill:none;stroke:var(--rule-2);stroke-width:1.5;stroke-dasharray:4 4}
+.lmap .bub text.m{display:none;font-size:18px}
 .lmap .famlabel rect{fill:var(--sheet);stroke:var(--rule-2);stroke-width:1}
 .lmap .famlabel text{fill:var(--ink-2);font:600 10.5px var(--mono);text-anchor:middle;dominant-baseline:central}
 .maplegend{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 16px;margin-top:8px;font-size:12.5px}
@@ -1350,6 +1362,21 @@ th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] bu
 @media (max-width:900px){.flywheel{grid-template-columns:1fr;gap:24px}
 .flywheel li:not(:last-child)::after{content:"↓";right:auto;left:50%;top:auto;bottom:-21px;transform:translateX(-50%)}}
 @media (max-width:900px){.cols{grid-template-columns:1fr}.how{grid-template-columns:1fr}}
+@media (max-width:560px){
+.top .wrap{flex-direction:column;align-items:stretch;flex-wrap:nowrap;gap:4px;padding-block:12px 2px}
+.top nav{flex-wrap:nowrap;overflow-x:auto;gap:2px;margin:0 -16px;padding:0 10px;scrollbar-width:none;
+  -webkit-mask-image:linear-gradient(90deg,#000 85%,transparent);mask-image:linear-gradient(90deg,#000 85%,transparent)}
+.top nav::-webkit-scrollbar{display:none}.top nav a{flex:none;padding:9px 8px;border-radius:8px}
+.tally{display:grid;grid-template-columns:1fr 1fr;gap:16px 18px}
+.filters{flex-wrap:nowrap;overflow-x:auto;margin:0 -16px;padding:2px 16px;scrollbar-width:none}
+.filters::-webkit-scrollbar{display:none}.filters button{flex:none;padding:8px 13px}
+.lmap .bub text.d{display:none}.lmap .bub text.m{display:block}
+.lmap .famlabel{transform-box:fill-box;transform-origin:center;transform:scale(1.45)}.lmap .famlabel.pair{display:none}
+.mini{padding:7px 10px;font-size:12px}.copy{padding:7px 12px}
+th[data-sort] button{padding:8px 0}
+.lineup a{width:34px;height:34px}
+.list th,.list td{padding:10px 8px}.list .chip{font-size:10px;padding:3px 7px;letter-spacing:.03em}.list .status{font-size:10px;padding:2px 6px}.notfound .more a{display:inline-block;padding:8px 2px}.list th.num,.list td.num{padding-right:2px}
+}
 @media (max-width:560px){.keynums{grid-template-columns:repeat(2,minmax(0,1fr))}.hide-sm{display:none}.stampbox{flex-direction:row;padding:0}
 .stamp.big{font-size:20px;padding:11px 16px 9px}.verdict .why{font-size:17px}.file{padding:18px 16px}.verdict,.project,.score,.safety,.treasury,.evidence{padding:16px}
 .tally{gap:10px 24px}.tally dd{font-size:22px}}
@@ -1417,7 +1444,7 @@ JS = r"""
   function saveWatch(a){try{localStorage.setItem('dossier.watch',JSON.stringify(a))}catch(e){}}
   var seen=0;try{seen=+(localStorage.getItem('dossier.seen')||0)}catch(e){}
   function syncStars(){var wl=watchList();document.querySelectorAll('.star').forEach(function(b){var on=wl.indexOf(b.dataset.star)>=0;
-    b.setAttribute('aria-pressed',on?'true':'false');b.textContent=b.classList.contains('big')?(on?'★ Watching':'☆ Watch'):(on?'★':'☆')})}
+    b.setAttribute('aria-pressed',on?'true':'false');b.textContent=b.classList.contains('watch')?(on?'★ Watching':'☆ Watch'):(on?'★':'☆')})}
   function applyFilter(){var list=document.getElementById('feed');if(!list)return;
     list.querySelectorAll('.card').forEach(function(c){c.hidden=filterKey!=='all'&&c.dataset.state!==filterKey});
     document.querySelectorAll('.lmap .bub').forEach(function(b){b.classList.toggle('dim',filterKey!=='all'&&b.dataset.state!==filterKey)})}
