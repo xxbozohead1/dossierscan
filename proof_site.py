@@ -239,7 +239,10 @@ SOURCE_URL = "https://github.com/xxbozohead1/dossierscan"  # the public half: th
 def footer(feed: dict, up: str = "") -> str:
     bot = bot_username()
     report = f' Wrong verdict? <a href="https://t.me/{bot}" rel="noopener" target="_blank">Tell us</a>.' if bot else ""
-    return f"""<footer class="foot"><div class="wrap">
+    d = feed.get("dossier") or {}
+    official = (f'<p class="official-ca">Official <a href="{up}token.html">$DOSSIER</a> contract: <code>{e(d["token"])}</code> '
+                f'<button type="button" class="mini copy" data-copy="{e(d["token"])}">Copy CA</button></p>') if d.get("launched") else ""
+    return f"""<footer class="foot"><div class="wrap">{official}
 <p>Method <a href="{up}method.html">{e(feed["method"])}</a> · numbers updated <span data-l="net_at">—</span> ·
 <a href="{up}api.html">API</a> · <a href="{SOURCE_URL}" rel="noopener" target="_blank">Source</a></p>
 <p class="muted">{NAME} checks who claims a token and what the project behind it is doing. Verdicts are automated from public
@@ -1137,6 +1140,7 @@ th[data-sort] button{all:unset;cursor:pointer;font:inherit;letter-spacing:inheri
 th[data-sort] button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] button::after{content:" ↑"}
 .keynums dd small,.card-nums dd small{font-size:11px;color:var(--muted);font-weight:500}
+.official-ca{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}.official-ca code{word-break:break-all}
 .token-hero{display:flex;align-items:center;gap:18px;margin-bottom:6px}.token-hero h1{margin:0}
 .token-hero img{width:104px;height:104px;border-radius:50%;flex:none;box-shadow:0 6px 24px rgba(8,14,26,.25)}
 .official{background:var(--sheet);border:1px solid var(--rule);border-left:4px solid var(--warn);border-radius:12px;padding:16px 18px;margin:20px 0}
