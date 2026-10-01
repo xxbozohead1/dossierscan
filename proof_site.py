@@ -752,8 +752,8 @@ placeholder="Paste a contract address or type a ticker" autocomplete="off" spell
 <p class="more"><a href="agents.html">Every Orbio agent on file →</a></p></section>
 
 <section id="board"><div class="sec-head"><div><h2>The board</h2>
-<p class="sub">Tokens their project claims, ranked by evidence that something real exists and works.
-<a href="method.html">How scores work</a>.</p></div></div>
+<p class="sub">Tokens their own project claims, ranked by how far they've proven something real: status first, then the
+evidence that it exists and works. Hover a cell for what it measures. <a href="method.html">How scores work</a>.</p></div></div>
 {board_table(board, now)}</section>
 
 <section id="scams"><div class="sec-head"><div><h2>Impersonators caught</h2>
@@ -809,17 +809,114 @@ def feed_cards(ts: list[dict], now: int, up: str = "") -> str:
         ("" if ts else '<p class="muted empty">No launches in the last 48 hours.</p>')
 
 
+# the board's read of a row, so a hunter can scan it: the status (scoring-spec §5) with an icon, a caution for a red
+# flag on the token, and the five dimensions as heat cells, greener with more evidence
+STATUS_TEXT = {
+    "PROVEN": "Proven: a real product, steady output and an accountable team, held for 7 days in a row.",
+    "LIVE": "Live: something verifiably works: a working app, verified product output, or outside users of its contracts.",
+    "BUILDING": "Building: its project claims it and is showing work, but nothing verifiably works yet.",
+}
+DIM_ASK = {"product": "Does something exist, and does it work?", "build": "Is code being written?",
+           "team": "Is someone accountable?", "work": "Is it doing anything?", "integrity": "Is the token itself sound?"}
+CAUTION = {"CREATOR_EXIT": "Creator sold", "FEE_REDIRECT": "Fees redirected", "LAUNCH_BUNDLE": "Bundled launch",
+           "SERIAL": "Serial launcher", "CONFLICT": "Channels disagree", "BORROWED": "Borrowed brand"}
+ICON = {
+    "proven": '<circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4.9 8.2l2.1 2.1 4.2-4.5" fill="none" '
+              'stroke="var(--sheet)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+    "live": '<circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5.2 8.2l1.9 1.9 '
+            '3.8-4.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+    "building": '<circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.6"/>'
+                '<path d="M8 1.8a6.2 6.2 0 0 1 0 12.4z" fill="currentColor"/>',
+    "caution": '<path d="M8 2l6.4 11.4H1.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>'
+               '<path d="M8 6.3v3.2M8 11.5v.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
+}
+SEAL = MARK.replace('class="mark"', 'class="mark seal"')
+
+
+def icon(name: str) -> str:
+    return f'<svg class="ic" viewBox="0 0 16 16" aria-hidden="true">{ICON[name]}</svg>'
+
+
+def cautions(t: dict) -> list[str]:
+    return [f for f in t.get("flags") or [] if f in CAUTION]
+
+
+def tone(t: dict) -> str:
+    """A row's colour: amber for a red flag, whatever the status, else the status's own."""
+    return "caution" if cautions(t) else {"PROVEN": "proven", "LIVE": "live"}.get(t["status"], "building")
+
+
+def status_badge(status: str) -> str:
+    k = {"PROVEN": "proven", "LIVE": "live"}.get(status, "building")
+    return f'<span class="sbadge sb-{k}" title="{e(STATUS_TEXT.get(status, ""))}">{icon(k)}{e(status.title())}</span>'
+
+
+def caution_pill(flag: str) -> str:
+    return f'<span class="caution" title="{e(FLAGS[flag])}">{icon("caution")}{e(CAUTION[flag])}</span>'
+
+
+def seal_or_chip(s: str) -> str:
+    """Next to a board ticker: the seal when the project lists this contract, else the verdict chip (data-l "seal")."""
+    return f'<span class="sealwrap" title="{e(STATE_TEXT["verified"])}">{SEAL}</span>' if s == "verified" else chip(s)
+
+
+def heat(v: float, mx: int) -> float:
+    """How green a dimension's cell is: its share of the maximum, with a floor so any evidence at all shows."""
+    return 0.0 if v <= 0 else max(0.14, min(1.0, v / mx))
+
+
+def lookalikes(t: dict) -> str:
+    n = ((((t.get("trader") or {}).get("ticker") or {}).get("total") or 1) - 1)
+    if n < 1:
+        return ""
+    return (f'<span class="look" title="{plural(n, "other token")} {"uses" if n == 1 else "use"} the ticker ${e(t["symbol"] or "?")}. This is the one '
+            f'its project claims: check the contract before you buy.">+{plural(n, "lookalike")}</span>')
+
+
 def board_table(board: list[dict], now: int, up: str = "") -> str:
-    """The board in its own order (rank()), with # as that place: a click on a column re-sorts it (market cap, say), a
-    click on # puts it back."""
-    rows = "".join(f"""<tr data-t="{t["token"]}" data-rank="{i}" data-score="{(t["scores"] or {}).get("composite") or 0:.1f}"><td class="num">{i}</td><td>{tref(t, up)}</td><td>{status_chip(t["status"])}</td>
-<td class="score">{(t["scores"] or {}).get("composite") or 0:.0f}</td><td class="hide-sm">{bars(t["scores"])}</td>
-<td class="numcol hide-sm">{ph("mcap")}</td><td class="numcol hide-sm">{ph("vol")}</td><td class="hide-sm">{ph("curve")}</td>
-<td class="hide-sm"><span data-l="chip">{chip(state_of(t, now))}</span></td></tr>""" for i, t in enumerate(board, 1))
-    head = (sort_th("rank", "#", "num", "ascending") + "<th>Token</th><th>Status</th>" + sort_th("score", "Score", "score")
-            + '<th class="hide-sm">Product · Build · Team · Work · Integrity</th>' + sort_th("mcap", "Mkt cap", "numcol hide-sm")
-            + sort_th("vol", "24h vol", "numcol hide-sm") + sort_th("curve", "Curve", "hide-sm") + '<th class="hide-sm">Official</th>')
-    return f"""<div class="scroll"><table class="list sortable"><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table></div>"""
+    """The board in its own order (rank()), with # as that place: a click on a column re-sorts it (market cap, a
+    dimension), a click on # puts it back. Trust reads left to right: the seal, the status and any red flag, the score,
+    then the evidence behind it; market numbers sit apart, as context."""
+    rows = []
+    for i, t in enumerate(board, 1):
+        sc, s = t.get("scores") or {}, state_of(t, now)
+        comp = sc.get("composite") or 0
+        dims = {k: sc.get(k) or 0 for k, _, _ in DIMS}
+        sub = (lookalikes(t) if s == "verified" else "") + "".join(
+            f'<span class="tag">{e(b.title())}</span>' for b in t.get("badges") or [] if b in ("WINNER", "BUILD WEEK"))
+        shown = {k: f"{v:.0f}" if v >= 0.5 else "&lt;1" if v > 0 else "–" for k, v in dims.items()}
+        cells = "".join(f'<td class="heat hide-sm" title="{label}: {dims[k]:g} of {mx}. {DIM_ASK[k]}">'
+                        f'<span style="--f:{heat(dims[k], mx):.2f}">{shown[k]}</span></td>' for k, label, mx in DIMS)
+        strip = "".join(f'<i style="--f:{heat(dims[k], mx):.2f}">{label[0]}</i>' for k, label, mx in DIMS)
+        capped = f', capped by {e(t["cap"])}' if t.get("cap") else ""
+        data = " ".join(f'data-{k}="{v:.1f}"' for k, v in dims.items())
+        rows.append(f"""<tr class="t-{tone(t)}" data-t="{t["token"]}" data-rank="{i}" data-score="{comp:.1f}" {data}>
+<td class="num">{i}</td><td class="who"><div class="who-top"><span data-l="seal">{seal_or_chip(s)}</span>{tref(t, up)}</div>
+{f'<div class="tsub">{sub}</div>' if sub else ""}<span class="mheat show-sm" title="Product, Build, Team, Work, Integrity">{strip}</span></td>
+<td class="trust">{status_badge(t["status"])}{"".join(caution_pill(f) for f in cautions(t))}</td>
+<td class="sc"><span class="ring" style="--p:{max(0, min(100, comp)):.0f}" title="Score {comp:.0f} of 100: the five evidence columns added up{capped}. It sets the order; the columns say why.">{comp:.0f}</span></td>
+{cells}<td class="numcol mkt first hide-sm">{ph("mcap")}</td><td class="numcol mkt hide-sm">{ph("vol")}</td><td class="mkt hide-sm">{ph("curve")}</td></tr>""")
+    group = ('<tr class="grp hide-sm"><th colspan="4"></th><th colspan="5" class="g-ev">Evidence · greener is stronger</th>'
+             '<th colspan="3" class="g-mkt">Market · context only</th></tr>')
+    head = (sort_th("rank", "#", "num", "ascending") + "<th>Token</th><th>Status</th>" + sort_th("score", "Score", "sc")
+            + "".join(sort_th(k, f"{label}<small>of {mx}</small>", "heat hide-sm", tip=DIM_ASK[k]) for k, label, mx in DIMS)
+            + sort_th("mcap", "Mkt cap", "numcol mkt first hide-sm") + sort_th("vol", "24h vol", "numcol mkt hide-sm")
+            + sort_th("curve", "Curve", "mkt hide-sm"))
+    return f"""{board_key()}<div class="scroll"><table class="list sortable board"><thead>{group}<tr>{head}</tr></thead>
+<tbody>{"".join(rows)}</tbody></table></div>"""
+
+
+def board_key() -> str:
+    """The legend above the board: what each status, the seal, a red flag and a green cell mean."""
+    items = [(f'<span class="sealwrap">{SEAL}</span>', "listed by its project"),
+             (status_badge("PROVEN"), "held 7 days"), (status_badge("LIVE"), "verifiably works"),
+             (status_badge("BUILDING"), "not working yet"),
+             (f'<span class="caution">{icon("caution")}Red flag</span>', "on the token"),
+             ('<span class="ramp" aria-hidden="true"><i style="--f:.14"></i><i style="--f:.45"></i><i style="--f:1"></i></span>',
+              "more evidence")]
+    strip = "".join(f'<i style="--f:.45">{label[0]}</i>' for _, label, _ in DIMS)
+    return ('<ul class="boardkey">' + "".join(f"<li>{a}<span>{e(b)}</span></li>" for a, b in items)
+            + f'<li class="k-sm"><span class="mheat" style="margin:0">{strip}</span><span>Product, Build, Team, Work, Integrity</span></li></ul>')
 
 
 def linked_line(t: dict, up: str = "") -> str:
@@ -846,11 +943,12 @@ def scam_list(ts: list[dict], now: int, up: str = "", searchable: bool = False) 
     return f'<ul class="scams">{"".join(out)}</ul>'
 
 
-def sort_th(key: str, label: str, cls: str = "", order: str = "") -> str:
+def sort_th(key: str, label: str, cls: str = "", order: str = "", tip: str = "") -> str:
     """A column a click sorts by; `order` marks the one the rows already come sorted by."""
     c = f' class="{cls}"' if cls else ""
     o = f' aria-sort="{order}"' if order else ""
-    return f'<th{c} data-sort="{key}"{o}><button type="button">{label}</button></th>'
+    ti = f' title="{e(tip)}"' if tip else ""
+    return f'<th{c} data-sort="{key}"{o}{ti}><button type="button">{label}</button></th>'
 
 
 def agents_page(feed: dict) -> str:
@@ -1743,6 +1841,40 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .list .numcol{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
 .list.ev td:first-child{width:34%}.list tr.zero td{color:var(--muted)}.wrapcell{overflow-wrap:anywhere}
 .list.md td,.list.md th{vertical-align:top;text-transform:none;letter-spacing:0;font:14px/1.5 var(--sans)}.list.md th{font-weight:600}
+.boardkey{display:flex;flex-wrap:wrap;gap:8px 20px;list-style:none;margin:0 0 12px;padding:0;font-size:13px;color:var(--muted)}
+.boardkey li{display:flex;align-items:center;gap:7px}.boardkey .k-sm{display:none}.boardkey .mheat{display:inline-flex}
+.board{--heat:.52}.board tbody tr{--tone:var(--accent);--ring-bg:var(--sheet)}
+.board tbody tr.t-proven,.board tbody tr.t-live{--tone:var(--ok)}.board tbody tr.t-caution{--tone:var(--warn)}
+.board tbody td:first-child{box-shadow:inset 3px 0 0 var(--tone)}.board tbody tr:hover{--ring-bg:var(--sheet-2)}.board tbody tr:hover td{background:var(--sheet-2)}
+.board td{padding-block:9px}.board .grp th{padding:11px 6px 0;border-bottom:0;font-size:10px;letter-spacing:.09em;text-align:center}
+.board .grp .g-ev,.board .grp .g-mkt{background:linear-gradient(var(--rule-2),var(--rule-2)) bottom/calc(100% - 14px) 1px no-repeat;padding-bottom:6px}
+.board .who{min-width:180px}.who-top{display:flex;align-items:center;gap:9px}.who-top>.chip{font-size:10px;padding:2px 7px}
+.sealwrap{display:inline-flex;flex:none}.sealwrap .seal{width:21px;height:21px}
+.tsub{display:flex;flex-wrap:wrap;gap:4px 8px;margin:5px 0 0 30px}
+.look{font:500 11.5px var(--mono);color:var(--muted);cursor:help}
+.tag{font:600 10px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--accent);border:1px solid currentColor;border-radius:4px;padding:1px 5px}
+.ic{width:14px;height:14px;flex:none}
+.sbadge{display:inline-flex;align-items:center;gap:6px;font:700 11.5px var(--mono);letter-spacing:.07em;text-transform:uppercase;padding:4px 10px 4px 7px;border-radius:999px;white-space:nowrap;color:var(--sb);background:var(--sb-bg);box-shadow:inset 0 0 0 1px var(--sb-rim,transparent);cursor:help}
+.sb-proven{--sb:var(--ok);--sb-bg:var(--ok-bg);--sb-rim:var(--ok)}.sb-live{--sb:var(--ok);--sb-bg:var(--ok-bg)}.sb-building{--sb:var(--accent);--sb-bg:var(--accent-bg)}
+.caution{display:inline-flex;align-items:center;gap:5px;font:600 12px var(--sans);color:var(--warn);background:var(--warn-bg);padding:3px 8px 3px 6px;border-radius:6px;white-space:nowrap;cursor:help}
+.board .trust{white-space:nowrap}.board .trust .caution{display:flex;width:max-content;margin-top:5px}
+.board .sc{width:1%;text-align:center;padding-inline:10px}
+.ring{display:inline-grid;place-items:center;width:44px;height:44px;border-radius:50%;font:700 15px var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);cursor:help;
+  background:radial-gradient(closest-side,var(--ring-bg) 80%,transparent 82%),conic-gradient(var(--tone) calc(var(--p)*1%),var(--rule) 0)}
+.board th.heat{text-align:center;padding-inline:3px;letter-spacing:.04em;line-height:1.25}.board th.heat small{display:block;font-size:9.5px;letter-spacing:0;opacity:.7}
+.board td.heat{padding-inline:3px;width:58px}
+.heat span,.mheat i,.ramp i{position:relative;z-index:0}
+.heat span::before,.mheat i::before,.ramp i::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;background:var(--ok);opacity:calc(var(--f)*var(--heat,.52))}
+.heat span{display:block;min-width:40px;padding:8px 0;border-radius:8px;text-align:center;font:600 13.5px var(--mono);font-variant-numeric:tabular-nums;color:var(--ink)}
+.heat span[style="--f:0.00"],.mheat i[style="--f:0.00"]{color:var(--muted);box-shadow:inset 0 0 0 1px var(--rule)}
+.ramp{display:inline-flex;gap:3px}.ramp i{width:16px;height:14px;border-radius:4px}
+.board .mkt{color:var(--ink-2);font-size:13px;white-space:nowrap}.board .mkt .meter{width:34px;margin-right:6px}.board .mkt.first{border-left:1px solid var(--rule)}.board td.mkt .grad{font-weight:600}
+.show-sm{display:none}.mheat{gap:3px;margin:7px 0 0 30px}
+.mheat i{width:19px;height:17px;border-radius:4px;font:600 9.5px/17px var(--mono);font-style:normal;text-align:center;color:var(--ink-2)}
+@media (max-width:560px){.mheat.show-sm{display:flex}.boardkey .k-sm{display:flex}.boardkey{gap:7px 14px;font-size:12.5px}
+.board .who{min-width:0}.ring{width:38px;height:38px;font-size:13.5px}.list.board th,.list.board td{padding-inline:5px}
+.board .who-top{gap:7px}.sealwrap .seal{width:18px;height:18px}.tsub,.mheat{margin-left:25px}
+.sbadge{font-size:10px;padding:3px 8px 3px 6px;gap:4px}.sbadge .ic{width:12px;height:12px}.caution{font-size:11px}}
 .dims{display:flex;gap:4px;min-width:150px}.dims .dim{flex:1}
 .bar{display:block;height:6px;border-radius:3px;background:var(--rule);overflow:hidden}.bar>span{display:block;height:100%;background:var(--ink)}
 .dims.full{flex-direction:column;gap:9px;margin-top:14px}.dims.full .dim{display:grid;grid-template-columns:78px 1fr 58px;align-items:center;gap:10px}
@@ -2142,7 +2274,7 @@ JS = r"""
     try{localStorage.setItem('dossier.theme',light?'light':'dark')}catch(e){}themeSync()});
   themeSync();
   var LABEL={verified:'Verified',scam:'Impersonator',linked:'Impersonator’s wallet',checking:'Checking',unverified:'Unverified'},SUB='₀₁₂₃₄₅₆₇₈₉';
-  var ORDER={verified:3,checking:2,unverified:1,scam:0,linked:0},filterKey='all';
+  var ORDER={verified:3,checking:2,unverified:1,scam:0,linked:0},filterKey='all',VTEXT=@@VTEXT@@;
   // the filter a state falls under (group_of in proof_site.py): an impersonator's wallet with the impersonators
   function grp(s){return s==='linked'?'scam':s==='unverified'?'checking':s}
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
@@ -2170,6 +2302,7 @@ JS = r"""
   var F={
     mcap:function(r){return usd(r.m)},price:function(r){return price(r.p)},vol:function(r){return usd(r.v)},
     curve:meter,change:change,chip:function(r){return chip(r.s)},
+    seal:function(r){return r.s==='verified'?'<span class="sealwrap" title="'+esc(VTEXT)+'">@@SEAL@@</span>':chip(r.s)},
     holders:function(r){return r.h==null?'—':r.h+' <small>('+r.hk+')</small>'},
     trades:function(r){return r.b==null?'—':'<span class="up">'+r.b+'</span> / <span class="down">'+r.x+'</span>'},
     trend:function(r){var s=spark(r.sp,120,32);if(!s&&r.v==null)return '';
@@ -2539,7 +2672,7 @@ JS = r"""
   function sortVal(row,key){var r=(LIVE&&LIVE.t[row.dataset.t])||{};switch(key){
     case 'mcap':return r.m||0;case 'vol':return r.v||0;case 'curve':return r.g?101:(r.c||0);case 'age':return +row.dataset.lt||0;
     case 'verdict':return ORDER[r.s||row.dataset.state]||0;case 'rank':return +row.dataset.rank||0;
-    case 'score':return +row.dataset.score||0;default:return row.dataset.sym||''}}
+    case 'score':return +row.dataset.score||0;default:return key in row.dataset?+row.dataset[key]||0:row.dataset.sym||''}}
   function sortBy(th){var tb=th.closest('table').tBodies[0],key=th.dataset.sort,cur=th.getAttribute('aria-sort');
     var desc=cur?cur==='ascending':key!=='name'&&key!=='rank';  // biggest first, but a name or a place from the top
     th.closest('tr').querySelectorAll('th').forEach(function(x){x.removeAttribute('aria-sort')});
@@ -2590,6 +2723,7 @@ JS = r"""
   setTimeout(function(){try{localStorage.setItem('dossier.seen',String(Math.floor(now())))}catch(e){}},4000);
 })();
 """
+JS = JS.replace("@@SEAL@@", SEAL).replace("@@VTEXT@@", json.dumps(STATE_TEXT["verified"]))
 
 
 # ----------------------------------------------------------------- build
