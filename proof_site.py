@@ -36,10 +36,14 @@ CHECKING_FOR = 3 * DAY  # the index re-checks an unclaimed Orbio agent for 72 ho
 
 DIMS = (("product", "Product", 30), ("build", "Build", 20), ("team", "Team", 20), ("work", "Work", 20),
         ("integrity", "Integrity", 10))
-STATE = {"verified": "Verified", "scam": "Impersonator", "checking": "Checking", "unverified": "Unverified"}
+STATE = {"verified": "Verified", "scam": "Impersonator", "linked": "Impersonator's wallet", "checking": "Checking",
+         "unverified": "Unverified"}
+RED = ("scam", "linked")  # both red; "linked" is red for its money (proof_index.link_pass), not for a project's word
 STATE_TEXT = {
     "verified": "The project's own X account or website lists this exact contract.",
     "scam": "An official channel lists a different contract, or says this token isn't theirs.",
+    "linked": "Launched from a wallet, or a chain of wallets, that also launched a confirmed copy of a real project. "
+              "Its own project hasn't claimed it.",
     "checking": "Nothing official lists this contract yet. Dossier keeps checking for 72 hours after launch; "
                 "the official post often lands a few minutes after the token.",
     "unverified": "Nothing official lists this contract. That isn't proof of a scam, but no one has claimed it.",
@@ -153,9 +157,16 @@ def num(x, unit: str = "") -> str:
 
 def state_of(t: dict, now: int) -> str:
     v = t["verdict"]["verdict"]
+    if v == "scam" and t["verdict"].get("kind") == "linked":
+        return "linked"
     if v == "unverified" and t.get("orbio_agent") and now - (t.get("launched_at") or 0) < CHECKING_FOR:
         return "checking"
     return v
+
+
+def group_of(s: str) -> str:
+    """The filter a state falls under: an impersonator's wallet with the impersonators, unverified with checking."""
+    return "scam" if s == "linked" else "checking" if s == "unverified" else s
 
 
 def chip(s: str) -> str:
@@ -663,7 +674,7 @@ def map_svg(ts: list[dict], now: int, size, mode: str = "new", base: float = 0.0
                                                         ("o", tk.get("rank") if (tk.get("total") or 0) > 1 else None)) if v}
             # every launch in the last 48 hours is still being checked if nobody has claimed it (72 hours), so on the
             # New view an unclaimed one filters as checking; the Biggest view also has agents past that
-            st = "checking" if s == "unverified" and mode == "new" else s
+            st = "scam" if s == "linked" else "checking" if s == "unverified" and mode == "new" else s
             parts.append(f'<a class="bub v-{s}" href="t/{t["token"]}.html" data-t="{t["token"]}"{fam} '
                          f'data-state="{st}"><title>{e(tip)}</title>{orb(x, y, r)}{label}</a>')
         out.append(f'<g class="body" data-x="{X:.1f}" data-y="{Y:.1f}" data-r="{R:.1f}" transform="translate({X:.1f} {Y:.1f})">'
@@ -707,7 +718,7 @@ def home(feed: dict) -> str:
     filters = "".join(f'<button type="button" data-filter="{k}" aria-pressed="{"true" if k == "all" else "false"}">{label}'
                       f'<span>{n}</span></button>' for k, label, n in (
                           ("all", "All", len(recent)), ("verified", "Verified", counts["verified"]),
-                          ("checking", "Checking", counts["checking"] + counts["unverified"]), ("scam", "Impersonators", counts["scam"])))
+                          ("checking", "Checking", counts["checking"] + counts["unverified"]), ("scam", "Impersonators", counts["scam"] + counts["linked"])))
     # scams also holds copies launched straight on Pons, off the launchpad: next to the agent count, count agents only
     orbio_scams = sum(1 for t in scams if t.get("orbio_agent"))
     tally = [(e(len(orbio)), "Orbio agents on file"), (e(verified), "verified by their project"),
@@ -753,7 +764,8 @@ the real token when the project has launched one.</p></div></div>
 
 <section id="how"><h2>How {NAME} decides</h2><div class="how">
 <div>{chip("verified")}<p>{STATE_TEXT["verified"]} Social links in the token's metadata count for nothing: anyone can copy them.</p></div>
-<div>{chip("scam")}<p>{STATE_TEXT["scam"]} The page quotes the post or names the contract the project claims instead.</p></div>
+<div>{chip("scam")}<p>{STATE_TEXT["scam"]} The page quotes the post or names the contract the project claims instead.
+Anything launched from the same wallet, or the same chain of wallets, is flagged too: {chip("linked")}</p></div>
 <div>{chip("checking")}<p>No official channel lists this contract yet. For the first six hours after launch, {NAME} looks for the
 project's post every minute.</p></div>
 </div><p class="more"><a href="method.html">The full method →</a></p></section>
@@ -769,7 +781,7 @@ def card(t: dict, now: int, up: str = "") -> str:
     if tk and tk["rank"] > 1 and s != "verified":  # not the first token with this ticker: say so where hunters scan
         extra += (f'<p class="copynote">{ordinal(tk["rank"])} ${e(t["symbol"] or "?")}: the first launched '
                   f'{e(fmt_span((t["launched_at"] or 0) - (tk["first"]["ts"] or 0)))} earlier</p>')
-    return f"""<li class="card" data-t="{t["token"]}" data-lt="{t["launched_at"] or 0}" data-state="{"checking" if s == "unverified" else s}">
+    return f"""<li class="card" data-t="{t["token"]}" data-lt="{t["launched_at"] or 0}" data-state="{group_of(s)}">
 <div class="card-top"><span class="fileno">{fileno(t)}</span><span class="age">{when(t["launched_at"])}</span>{tools(t["token"])}</div>
 <div class="card-title">{tref(t, up, "tok stretch")}<span data-l="chip">{chip(s)}</span></div>
 <div class="trend" data-l="trend"></div>
@@ -796,6 +808,15 @@ def board_table(board: list[dict], now: int, up: str = "") -> str:
     return f"""<div class="scroll"><table class="list sortable"><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table></div>"""
 
 
+def linked_line(t: dict, up: str = "") -> str:
+    """Under a token flagged for its money: the confirmed copy it's linked to."""
+    via = t["verdict"].get("via") or {}
+    if not via.get("token"):
+        return "Launched from an impersonator's wallet."
+    ref = tref({"token": via["token"], "symbol": via.get("symbol"), "orbio_agent": via.get("vault_id"), "name": None}, up, "tok inline")
+    return f"Launched from an impersonator's wallet: linked to {ref}."
+
+
 def scam_list(ts: list[dict], now: int, up: str = "", searchable: bool = False) -> str:
     if not ts:
         return '<p class="muted">None caught yet.</p>'
@@ -805,9 +826,9 @@ def scam_list(ts: list[dict], now: int, up: str = "", searchable: bool = False) 
         target = next((i["url"] for i in t.get("identities") or [] if i["binding"] in ("contradicted", "disavowed")), "")
         rc = t["verdict"]["receipts"][:1]
         attr = f' data-search="{e(search_key(t))}"' if searchable else ""
-        out.append(f"""<li{attr}><div class="row">{tref(t, up)}{chip("scam")}<span class="age">{when(t["launched_at"])}</span></div>
+        out.append(f"""<li{attr}><div class="row">{tref(t, up)}{chip(state_of(t, now))}<span class="age">{when(t["launched_at"])}</span></div>
 <p>{e(sentence(t["verdict"]["why"]))}{"".join(f" {link(u, 'Receipt', 'rcpt')}" for u in rc)}</p>
-<p class="real">{f"Real token: {tref(real[0], up, 'tok inline')}" if real else f"Copies {link(target) if target else 'a real project'}: no real token launched yet."}</p></li>""")
+<p class="real">{linked_line(t, up) if state_of(t, now) == "linked" else f"Real token: {tref(real[0], up, 'tok inline')}" if real else f"Copies {link(target) if target else 'a real project'}: no real token launched yet."}</p></li>""")
     return f'<ul class="scams">{"".join(out)}</ul>'
 
 
@@ -875,7 +896,7 @@ def token_page(t: dict, feed: dict) -> str:
     xp = t.get("x_profile") or {}
     site = next((i["url"] for i in t.get("identities") or [] if i["role"] == "website"), None)
     actions = []
-    if agent and s != "scam":
+    if agent and s not in RED:
         actions.append(link(f"https://www.orbio.so/launchpad/{addr}", "Trade on Orbio" if s == "verified" else "Orbio page",
                             "btn primary" if s == "verified" else "btn"))
     actions.append(link(f"https://dexscreener.com/robinhood/{addr}", "Chart", "btn"))
@@ -888,6 +909,7 @@ def token_page(t: dict, feed: dict) -> str:
     note = {"verified": f"Verified {fmt_span(lag)} after launch" if lag is not None and lag >= 0 else "Verified",
             "scam": "Flagged " + (fmt_span(tl["flagged_at"] - t["launched_at"]) + " after launch"
                                   if tl.get("flagged_at") and t["launched_at"] and tl["flagged_at"] >= t["launched_at"] else "by the index"),
+            "linked": "Flagged for its money: no project has claimed it",
             "checking": f"Checked {plural(tl.get('checks') or 0, 'time')} so far",
             "unverified": "No claim after 72 hours"}[s]
     badges = "".join(f'<span class="badge">{e(b.title())}</span>' for b in t.get("badges") or [] if b != "ORBIO AGENT")
@@ -930,7 +952,14 @@ def verdict_block(t: dict, s: str) -> str:
     receipts = "".join(f"<li>{link(u, receipt_text(u))}</li>" for u in v["receipts"])
     extra = ""
     real = [r for r in rel.get("claimed") or [] if r["token"] != t["token"]]
-    if s == "scam" and real:
+    if s == "linked":
+        via = v.get("via") or {}
+        if via.get("token"):
+            extra = ("<div class=\"related bad\"><h3>The confirmed copy it's linked to</h3><ul><li>"
+                     + tref({"token": via["token"], "symbol": via.get("symbol"), "orbio_agent": via.get("vault_id"), "name": None}, "../")
+                     + "</li></ul><p class=\"muted\">The receipt is the transfer that ties this launch's wallet to that one. "
+                     "An official post or page from the project it names would clear it.</p></div>")
+    elif s == "scam" and real:
         extra = ('<div class="related"><h3>The real token</h3><ul>' + "".join(
             f'<li>{tref(r, "../")} <span class="muted">claimed by {e(r["via"].split(":", 1)[1])}</span></li>'
             for r in real) + "</ul></div>")
@@ -971,7 +1000,7 @@ def project_block(t: dict, s: str = "") -> str:
     xp = t.get("x_profile") or {}
     parts = []
     ab = t.get("about") or {}
-    if ab.get("line") and s != "scam":  # an impersonator's page must not describe the project it copies as its own
+    if ab.get("line") and s not in RED:  # an impersonator's page must not describe the project it copies as its own
         kind = {"utility": "Utility", "meme": "Meme"}.get(ab.get("kind"), "")
         parts.append(f'<div class="read"><p class="read-k"><span class="lbl">{NAME}’s read</span>'
                      + (f'<span class="kind k-{e(ab["kind"])}">{kind}</span>' if kind else "")
@@ -1645,7 +1674,7 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .tok .nm{color:var(--muted);font-size:13.5px}.tok.inline b{font-size:15px}.tok:hover b{text-decoration:underline}
 .chip{display:inline-flex;align-items:center;gap:6px;flex:none;font:600 11.5px var(--mono);letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:999px;white-space:nowrap;color:var(--st);background:var(--st-bg)}
 .chip i{width:6px;height:6px;border-radius:50%;background:currentColor}
-.v-verified{--st:var(--ok);--st-bg:var(--ok-bg)}.v-scam{--st:var(--bad);--st-bg:var(--bad-bg)}
+.v-verified{--st:var(--ok);--st-bg:var(--ok-bg)}.v-scam,.v-linked{--st:var(--bad);--st-bg:var(--bad-bg)}
 .v-checking{--st:var(--accent);--st-bg:var(--accent-bg)}.v-unverified{--st:var(--warn);--st-bg:var(--warn-bg)}
 .status{display:inline-block;font:600 11.5px var(--mono);letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:5px;border:1px solid var(--rule-2);color:var(--ink-2);white-space:nowrap}
 .s-proven{background:var(--ok);border-color:var(--ok);color:var(--sheet)}.s-live{border-color:var(--ok);color:var(--ok)}
@@ -1980,8 +2009,10 @@ JS = r"""
     if(light)HTML.setAttribute('data-theme','light');else HTML.removeAttribute('data-theme');
     try{localStorage.setItem('dossier.theme',light?'light':'dark')}catch(e){}themeSync()});
   themeSync();
-  var LABEL={verified:'Verified',scam:'Impersonator',checking:'Checking',unverified:'Unverified'},SUB='₀₁₂₃₄₅₆₇₈₉';
-  var ORDER={verified:3,checking:2,unverified:1,scam:0},filterKey='all';
+  var LABEL={verified:'Verified',scam:'Impersonator',linked:'Impersonator’s wallet',checking:'Checking',unverified:'Unverified'},SUB='₀₁₂₃₄₅₆₇₈₉';
+  var ORDER={verified:3,checking:2,unverified:1,scam:0,linked:0},filterKey='all';
+  // the filter a state falls under (group_of in proof_site.py): an impersonator's wallet with the impersonators
+  function grp(s){return s==='linked'?'scam':s==='unverified'?'checking':s}
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
   function now(){return Date.now()/1000}
   function href(t){return D.href.replace('{t}',t)}
@@ -2043,7 +2074,7 @@ JS = r"""
   function fill(root,r){root.querySelectorAll('[data-l]').forEach(function(el){var f=F[el.dataset.l];if(f)el.innerHTML=f(r)})}
   function fileHref(k){return LIVE&&LIVE.t[k]?href(k):'https://robin.etherscan.io/token/'+k}
   function cardHtml(k,r){var s=r.s,rc=/^https?:\/\//.test(r.rc||'')?r.rc:'';
-    return '<li class="card" data-t="'+k+'" data-lt="'+(r.lt||0)+'" data-state="'+(s==='unverified'?'checking':s)+'">'+
+    return '<li class="card" data-t="'+k+'" data-lt="'+(r.lt||0)+'" data-state="'+grp(s)+'">'+
       '<div class="card-top"><span class="fileno">'+(r.a?'File '+r.a:'Pons launch')+'</span><span class="age">'+rel(now()-r.lt)+'</span>'+
       '<span class="tools"><button type="button" class="mini copy" data-copy="'+k+'">Copy CA</button>'+
       '<button type="button" class="mini star" data-star="'+k+'" aria-pressed="false" aria-label="Add to watchlist">☆</button></span></div>'+
@@ -2078,7 +2109,7 @@ JS = r"""
   function times(){var t=now();document.querySelectorAll('time[data-ts]').forEach(function(el){el.textContent=rel(t-(+el.dataset.ts))})}
   function apply(){times();if(!LIVE)return;addNew();renderWatch();
     document.querySelectorAll('[data-t]').forEach(function(root){var r=LIVE.t[root.dataset.t];if(!r)return;fill(root,r);
-      if(root.classList.contains('card'))root.dataset.state=r.s==='unverified'?'checking':r.s;
+      if(root.classList.contains('card'))root.dataset.state=grp(r.s);
       if(root.classList.contains('bub'))bubble(root,r)});
     var n=LIVE.net||{};document.querySelectorAll('[data-l^="net_"]').forEach(function(el){var k=el.dataset.l;
       el.innerHTML=k==='net_orbio'?price(n.orbio_usd):k==='net_mcap'?usd(n.mcap_usd):k==='net_at'?rel(now()-LIVE.at):'—'});
@@ -2096,7 +2127,7 @@ JS = r"""
   function useMap(m){MAP=m;var s=m._st;MX=s.MX;BODY=s.BODY;ONMAP=s.ONMAP;W=s.W;H=s.H}
   if(MAP)MX=MAP._st.MX;
   function bubble(b,r){if(!r.s)return;for(var v in LABEL)b.classList.toggle('v-'+v,v===r.s);
-    var top=!!b.closest('.lmap[data-mode="top"]');b.dataset.state=r.s==='unverified'&&!top?'checking':r.s;
+    var top=!!b.closest('.lmap[data-mode="top"]');b.dataset.state=r.s==='unverified'&&top?'unverified':grp(r.s);
     var age=r.lt?now()-r.lt:0,fresh=age<3600;b.classList.toggle('fresh',fresh);
     if(fresh&&!b.querySelector('.halo')){var c=b.querySelector('.core'),h=c.cloneNode(false);h.setAttribute('class','halo');b.insertBefore(h,c)}
     if(top)return;  // the Biggest view holds agents of any age: none of them fades
@@ -2124,7 +2155,7 @@ JS = r"""
       '" aria-pressed="false" aria-label="Add to watchlist">☆</button></div>':'<p class="mc-hint">'+(kb?'Enter opens':'Click for')+' the full file</p>')}
   function famCard(i){var f=MX.f[i];if(!f)return '';var c={verified:0,scam:0,checking:0,unverified:0};
     // on New an unclaimed launch is still being checked; the Biggest view also has ones past their 72 hours
-    f.m.forEach(function(k){var s=(LIVE&&LIVE.t[k]&&LIVE.t[k].s)||'checking';c[s==='unverified'&&MX.k!=='top'?'checking':s]++});
+    f.m.forEach(function(k){var s=(LIVE&&LIVE.t[k]&&LIVE.t[k].s)||'checking';c[s==='unverified'&&MX.k==='top'?'unverified':grp(s)]++});
     var sum=[c.verified?c.verified+' verified':'',c.scam?c.scam+' impersonator'+(c.scam>1?'s':''):'',c.checking?c.checking+' checking':'',
       c.unverified?c.unverified+' unverified':''].filter(Boolean).join(' · ');
     var rows=f.m.slice(0,8).map(function(k){var r=(LIVE&&LIVE.t[k])||{},x=MX.t[k]||{},s=r.s||'checking';
@@ -2240,7 +2271,7 @@ JS = r"""
     Object.keys(LIVE.t).forEach(function(k){var r=LIVE.t[k];if(n>=6||ONMAP[k]||!r.a||!r.lt||t-r.lt>6*3600)return;
       var rr=Math.max(8,Math.min(44,7+4.2*Math.sqrt(Math.max(0,(r.m||0)-(MX.b||0))/1000))),p=freeSpot(rr);ONMAP[k]=1;if(!p)return;n++;
       var s=r.s||'checking',g=document.createElementNS(NS,'g');g.setAttribute('class','body');
-      g.innerHTML='<a class="bub born v-'+s+'" href="'+esc(href(k))+'" data-t="'+esc(k)+'" data-state="'+(s==='unverified'?'checking':s)+
+      g.innerHTML='<a class="bub born v-'+s+'" href="'+esc(href(k))+'" data-t="'+esc(k)+'" data-state="'+grp(s)+
         '" aria-label="$'+esc(r.sym||'?')+' #'+esc(r.a)+' · '+LABEL[s]+'">'+orbSVG(0,0,rr)+(rr>=17?'<text class="d" x="0" y="0" style="font-size:'+
         Math.min(13,rr*.42).toFixed(1)+'px">'+esc((r.sym||'?').slice(0,7))+'</text>':'')+'</a>';
       MAP.querySelector('.bodies').appendChild(g);drawBody(addBody(g,p.x,p.y,rr));bubble(g.firstChild,r)});
