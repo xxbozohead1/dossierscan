@@ -1310,7 +1310,10 @@ def strategy_page(feed: dict) -> str:
 # an explicit data-theme="dark"
 CSS = """
 :root{--bg:#e8ebf0;--sheet:#fff;--sheet-2:#f4f6f9;--ink:#0d1522;--ink-2:#39455a;--muted:#657084;--rule:#d5dae2;--rule-2:#b8c0cc;
---accent:#2d49d8;--accent-bg:#e5e9fc;--scrim:rgba(232,235,240,.9);--ok:#0b7a4b;--ok-bg:#e0f2e8;--bad:#cc2539;--bad-bg:#fbe6e9;--warn:#9a6300;--warn-bg:#faefd4;
+--accent:#2d49d8;--accent-bg:#e5e9fc;--scrim:rgba(232,235,240,.9);
+--glass:rgba(255,255,255,.52);--glass-hi:rgba(255,255,255,.9);--glass-spec:rgba(255,255,255,.95);--rim-hi:#fff;--rim-lo:rgba(13,21,34,.1);
+--ok-glow:rgba(11,122,75,.18);--bad-glow:rgba(204,37,57,.16);--accent-glow:rgba(45,73,216,.18);
+--amb-a:rgba(45,73,216,.16);--amb-b:rgba(11,122,75,.12);--amb-c:rgba(204,37,57,.09);--ok:#0b7a4b;--ok-bg:#e0f2e8;--bad:#cc2539;--bad-bg:#fbe6e9;--warn:#9a6300;--warn-bg:#faefd4;
 --display:"Bricolage Grotesque","Instrument Sans",system-ui,sans-serif;--sans:"Instrument Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){@@DARK@@}}
@@ -1350,12 +1353,30 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .filters button span{font:500 12px var(--mono);color:var(--muted)}
 .filters button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:var(--sheet)}.filters button[aria-pressed=true] span{color:inherit;opacity:.7}
 .feed{list-style:none;margin:0;padding:0;display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(min(100%,330px),1fr))}
-.card{position:relative;background:var(--sheet);border:1px solid var(--rule);border-radius:12px;padding:14px 16px 13px;display:flex;flex-direction:column;gap:9px}
-.card:hover{border-color:var(--rule-2)}
+/* the feed's cards are glass, like the map's spheres: a see-through fill with a sheen, a rim lit from the top left and
+   tinted by the verdict at the far corner, and the verdict's glow */
+.card{position:relative;border:0;border-radius:14px;padding:14px 16px 13px;display:flex;flex-direction:column;gap:9px;
+  background:radial-gradient(55% 42% at 14% 0%,var(--glass-spec),transparent 72%),
+    radial-gradient(110% 75% at 100% 0%,var(--st-glow,transparent),transparent 60%),
+    radial-gradient(80% 45% at 50% 115%,var(--st-glow,transparent),transparent 72%),
+    linear-gradient(165deg,var(--glass-hi),transparent 34%),var(--glass);
+  box-shadow:0 14px 30px -20px rgba(0,0,0,.55),inset 0 1px 0 var(--glass-hi);transition:transform .18s,box-shadow .18s}
+.card::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;border:1px solid var(--rule)}
+@supports ((mask-composite:exclude) or (-webkit-mask-composite:xor)){
+.card::before{border:0;padding:1px;background:linear-gradient(150deg,var(--rim-hi),var(--rim-lo) 32%,var(--rim-lo) 62%,var(--st-rim,var(--rim-lo)));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;
+  mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude}}
+.card:hover{transform:translateY(-2px);box-shadow:0 18px 38px -16px var(--st-glow,rgba(0,0,0,.5)),inset 0 1px 0 var(--glass-hi)}
+@media (prefers-reduced-motion:reduce){.card,.card:hover{transition:none;transform:none}}
+#live,#watching{position:relative;z-index:0}
+/* soft colour behind the feed, repeating all the way down, for the glass to show */
+#live::before{content:"";position:absolute;inset:-24px 0 0;z-index:-1;pointer-events:none;background-repeat:repeat-y;background-size:100% 1300px;
+  background-image:radial-gradient(34% 24% at 12% 22%,var(--amb-a),transparent 70%),radial-gradient(30% 22% at 88% 50%,var(--amb-b),transparent 70%),
+  radial-gradient(36% 24% at 45% 86%,var(--amb-c),transparent 70%)}
 .card-top{display:flex;justify-content:space-between;gap:10px;font:500 11.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 .card-top .age{text-transform:none;letter-spacing:0}
 .card-title{display:flex;align-items:center;gap:10px;justify-content:space-between}
-.stretch::after{content:"";position:absolute;inset:0;border-radius:12px}.card .rcpt,.card .real a{position:relative;z-index:1}
+.stretch::after{content:"";position:absolute;inset:0;border-radius:14px}.card .rcpt,.card .real a{position:relative;z-index:1}
 .card-nums{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0;padding:9px 0;border-block:1px dashed var(--rule)}
 .card-nums dt{font-size:11.5px;color:var(--muted)}.card-nums dd{margin:0;font:500 14px var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
 .card .why{margin:0;font-size:13.5px;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
@@ -1452,7 +1473,7 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .mini{font:600 11px var(--mono);letter-spacing:.02em;text-transform:none;padding:3px 7px;border:1px solid var(--rule-2);border-radius:6px;background:var(--sheet);color:var(--ink-2);cursor:pointer}
 .mini:hover{border-color:var(--ink-2);color:var(--ink)}.star[aria-pressed=true]{color:var(--warn);border-color:var(--warn)}
 .newbadge{font:700 10px var(--mono);letter-spacing:.08em;color:var(--sheet);background:var(--accent);padding:2px 6px;border-radius:4px}
-.card.is-new{border-color:var(--accent)}.trend:empty{display:none}.star-cell{width:1%}
+.card.is-new{--st-rim:var(--accent);box-shadow:0 0 0 1px var(--accent),0 14px 30px -18px var(--accent-glow)}.trend:empty{display:none}.star-cell{width:1%}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:30;background:var(--ink);color:var(--sheet);font:600 13.5px var(--sans);padding:10px 16px;border-radius:10px;box-shadow:0 8px 24px rgba(8,14,26,.25)}
 .report{margin:16px 0 0;padding-top:12px;border-top:1px dashed var(--rule);font-size:14px}
 th[data-sort] button{all:unset;cursor:pointer;font:inherit;letter-spacing:inherit;text-transform:inherit;color:inherit}
@@ -1590,8 +1611,8 @@ th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] bu
 .lineup{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}
 .lineup a{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--st-bg);border:2px solid var(--st);color:var(--st);font:600 11px var(--mono);text-decoration:none}
 .lineup a.me{outline:2px solid var(--ink);outline-offset:2px}.lineup-note{margin:4px 0 0}
-.card[data-state=verified]{box-shadow:inset 4px 0 0 var(--ok)}.card[data-state=scam]{box-shadow:inset 4px 0 0 var(--bad)}
-.card[data-state=checking]{box-shadow:inset 4px 0 0 var(--accent)}
+.card[data-state=verified]{--st-glow:var(--ok-glow);--st-rim:var(--ok)}.card[data-state=scam]{--st-glow:var(--bad-glow);--st-rim:var(--bad)}
+.card[data-state=checking]{--st-glow:var(--accent-glow);--st-rim:var(--accent)}
 .trader h3{margin:16px 0 6px;font:600 11.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}.trader h3:first-of-type{margin-top:8px}
 .copynote{margin:0;font-size:13px;color:var(--warn);font-weight:600}
 .token-hero{display:flex;align-items:center;gap:18px;margin-bottom:6px}.token-hero h1{margin:0}
@@ -1639,7 +1660,11 @@ th[data-sort] button{padding:8px 0}
 .tally{gap:10px 24px}.tally dd{font-size:22px}}
 """
 DARK = ("--bg:#090d12;--sheet:#10161f;--sheet-2:#151d28;--ink:#e7ecf3;--ink-2:#b4bfcd;--muted:#8792a4;--rule:#212a36;--rule-2:#324050;"
-        "--accent:#8fa3ff;--accent-bg:#18214a;--scrim:rgba(6,9,14,.88);--ok:#39d08c;--ok-bg:#0e2a1d;--bad:#ff6072;--bad-bg:#301318;--warn:#f3b64b;"
+        "--accent:#8fa3ff;--accent-bg:#18214a;--scrim:rgba(6,9,14,.88);"
+        "--glass:rgba(18,26,38,.5);--glass-hi:rgba(255,255,255,.08);--glass-spec:rgba(255,255,255,.11);"
+        "--rim-hi:rgba(255,255,255,.5);--rim-lo:rgba(255,255,255,.06);"
+        "--ok-glow:rgba(57,208,140,.24);--bad-glow:rgba(255,96,114,.22);--accent-glow:rgba(143,163,255,.24);"
+        "--amb-a:rgba(143,163,255,.16);--amb-b:rgba(57,208,140,.11);--amb-c:rgba(255,96,114,.09);--ok:#39d08c;--ok-bg:#0e2a1d;--bad:#ff6072;--bad-bg:#301318;--warn:#f3b64b;"
         "--warn-bg:#2c2210;color-scheme:dark")
 CSS = CSS.replace("@@DARK@@", DARK)
 
