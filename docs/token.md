@@ -8,7 +8,8 @@ the bottom shows the numbers as they happen.
 
 ## Where the trading fees go
 
-Every trade of an Orbio launch pays a creator fee. Orbio's contracts split it three ways before anyone touches it:
+Every $DOSSIER trade pays a creator fee. Orbio's contracts split it three ways, on the terms $DOSSIER launched with,
+before anyone touches it:
 
 @@fees@@
 
@@ -19,6 +20,9 @@ Every trade of an Orbio launch pays a creator fee. Orbio's contracts split it th
   90 days of checks, claimed CREDIT is sold to buy back and burn $DOSSIER. The staked ORBIO itself is never withdrawn:
   it stays staked for good and keeps earning, and the ledger shows it.
 - **5% goes to Orbio's launchpad treasury.**
+
+Orbio changed its terms for launches from agent #472 on (1 October): their fees split four ways, 50% staked, 30% minted
+as CREDIT, 10% AI balance and 10% to Orbio. $DOSSIER keeps the split it launched with.
 
 ## What the compute pays for
 

@@ -1300,11 +1300,33 @@ def trader_block(t: dict, now: int) -> str:
             "</p></section>")
 
 
+# how an agent's creator fees split, told apart by the treasury fee it launched with (Orbio's feeBps). Orbio changed its
+# terms at agent #472 (1 Oct 2026, 18:05 UTC): the treasury's 5% became 10%, and 30% is now minted to the agent as CREDIT
+FEE_TERMS = {500: {"staked": 50, "credit": 0, "balance": 45, "orbio": 5},
+             1000: {"staked": 50, "credit": 30, "balance": 10, "orbio": 10}}
+
+
+def fee_terms_text(t: dict) -> str:
+    """The treasury's opening line, on the agent's own terms, with the fees it has collected so far."""
+    tr = t.get("treasury") or {}
+    k = FEE_TERMS.get(tr.get("fee_bps"))
+    if not k:  # terms this build doesn't know: no percentages rather than wrong ones
+        s = ("Trading fees fund this agent: part is staked as ORBIO and earns CREDIT, and part becomes a balance it can "
+             "spend on models and tools.")
+    else:
+        staked = "half" if k["staked"] == 50 else f'{k["staked"]}%'
+        s = (f'Trading fees fund this agent: {staked} is staked as ORBIO'
+             + (f', {k["credit"]}% is minted to it as CREDIT, {k["balance"]}%' if k["credit"] else f' and earns CREDIT, {k["balance"]}%')
+             + f' becomes a balance it can spend on models and tools, and {k["orbio"]}% goes to Orbio.')
+    if tr.get("fees_orbio"):
+        s += f' It has collected {tr["fees_orbio"]:,.0f} ORBIO in fees so far.'
+    return s
+
+
 def treasury_block(t: dict) -> str:
     cells = [("Spendable balance", "trt_bal", "t-bal"), ("Staked", "trt_staked", "t-stake"), ("CREDIT earned", "trt_earned", "t-credit"),
              ("CREDIT activated", "trt_act", "t-credit"), ("Principal withdrawn", "trt_wd", "t-wd")]
-    return f"""<section class="treasury"><h2>Agent treasury</h2><p class="sub">Trading fees fund this agent: half is staked as
-ORBIO and earns CREDIT, and 45% becomes a balance it can spend on models and tools.</p>
+    return f"""<section class="treasury"><h2>Agent treasury</h2><p class="sub">{e(fee_terms_text(t))}</p>
 <div class="tiles">{"".join(tile(a, k, c) for a, k, c in cells)}</div></section>"""
 
 
@@ -1727,6 +1749,19 @@ def split_bar(parts, label: str) -> str:
     return f'<div class="split" role="img" aria-label="{e(label)}">{bar}</div><ul class="split-legend">{legend}</ul>'
 
 
+def fees_collected(d: dict, feed: dict) -> str:
+    """Under the fee split: what $DOSSIER's trading has actually paid so far, and where each part went."""
+    tr = d.get("treasury") or {}
+    if not d.get("launched") or not tr.get("fees_orbio"):
+        return ""
+    px = (feed.get("network") or {}).get("orbio_usd")
+    worth = f" (about {usd(tr['fees_orbio'] * px)})" if px else ""
+    orbio = lambda k: f"{tr.get(k) or 0:,.0f} ORBIO"  # noqa: E731 -- whole numbers, one style through the sentence
+    return (f'<p class="collected">So far $DOSSIER\'s trading has paid <b>{orbio("fees_orbio")}</b> in creator fees{e(worth)}: '
+            f'{orbio("staked_orbio")} staked, {orbio("sold_orbio")} sold for {e(usd(tr.get("balance_usdg") or 0))} of compute, '
+            f'and {orbio("orbio_cut_orbio")} to Orbio.</p>')
+
+
 def official_contract(d: dict) -> str:
     if not d.get("launched"):
         return ('<div class="official"><p class="eyebrow">Official contract</p><p class="big">Not launched yet.</p>'
@@ -1761,7 +1796,8 @@ def ledger(d: dict, feed: dict) -> str:
         runway = "—" if left is None or avg <= 0 else f"{left / avg:.1f} days" if left / avg < 10 else f"{left / avg:.0f} days"
         rev, burned = d.get("pass_revenue"), d.get("burned")
         rev_s = "—" if rev is None else num(rev, "$DOSSIER") + (f" <small>≈ {usd(rev * px)}</small>" if px and rev else "")
-        rows += [("AI balance credited by fees", usd(tr.get("balance_usdg"))), ("AI balance left for checks", usd(left)),
+        rows += [("Creator fees collected", num(tr.get("fees_orbio") or 0, "ORBIO")),
+                 ("AI balance credited by fees", usd(tr.get("balance_usdg"))), ("AI balance left for checks", usd(left)),
                  ("Compute runway, estimated", runway), ("ORBIO staked", num(tr.get("staked_orbio"), "ORBIO")),
                  ("CREDIT earned by the stake", f'{(tr.get("credit_owed") or 0) + (tr.get("credit_claimed") or 0):.2f}'),
                  ("Stake withdrawn (policy: never)", num(tr.get("withdrawn_orbio") or 0, "ORBIO")),
@@ -1782,7 +1818,8 @@ def ledger(d: dict, feed: dict) -> str:
 def strategy_page(feed: dict) -> str:
     d = feed.get("dossier") or {}
     text = TOKEN_DOC.read_text("utf-8") if TOKEN_DOC.exists() else "# $DOSSIER\n\nComing soon."
-    blocks = {"contract": official_contract(d), "fees": split_bar(FEE_SPLIT, "Creator fees: 45% compute, 50% stake, 5% Orbio"),
+    blocks = {"contract": official_contract(d),
+              "fees": split_bar(FEE_SPLIT, "Creator fees: 45% compute, 50% stake, 5% Orbio") + fees_collected(d, feed),
               "passes": split_bar(PASS_SPLIT, "Pass revenue: 70% burned, 30% treasury"), "flywheel": flywheel(),
               "ledger": ledger(d, feed)}
     body = re.sub(r"<p>@@(\w+)@@</p>", lambda m: blocks.get(m.group(1), ""), md(text))
@@ -1966,7 +2003,7 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .how{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}
 .how>div{background:var(--sheet);border:1px solid var(--rule);border-radius:12px;padding:16px}.how p{margin:10px 0 0;font-size:14px;color:var(--ink-2)}
 .how.two{grid-template-columns:repeat(2,minmax(0,1fr))}.how.two ul{margin:10px 0 0;padding-left:18px;color:var(--ink-2);font-size:14.5px}
-.how.two li+li{margin-top:7px}.how.two h3{font-size:17px}
+.how.two li+li{margin-top:7px}.collected{margin:14px 0 0;color:var(--ink-2)}.collected b{color:var(--ink)}.how.two h3{font-size:17px}
 @media (max-width:700px){.how.two{grid-template-columns:1fr}}
 .casefile{gap:40px}.casehead .lede{max-width:72ch}.casehead h1{margin-top:4px}
 .pv{display:inline-block;margin-left:8px;padding:2px 9px;border-radius:999px;background:var(--accent-bg);color:var(--accent);letter-spacing:.06em}
