@@ -757,8 +757,8 @@ evidence that it exists and works. Hover a cell for what it measures. <a href="m
 {board_table(board, now)}</section>
 
 <section id="scams"><div class="sec-head"><div><h2>Impersonators caught</h2>
-<p class="sub">Tokens that copy a real project's name and socials. Each one links the post or page that exposes it, and
-the real token when the project has launched one.</p></div></div>
+<p class="sub">Tokens that copy a real project. Each one says why it's fake and links the proof, with what else its
+wallet launched and the real token when there is one.</p></div></div>
 {scam_list(scams[:10], now)}
 <p class="more"><a href="scams.html">All {len(scams)} impersonators →</a> <span class="muted">{scam_split(scams)}</span></p></section>
 
@@ -890,7 +890,7 @@ def board_table(board: list[dict], now: int, up: str = "") -> str:
         strip = "".join(f'<i style="--f:{heat(dims[k], mx):.2f}">{label[0]}</i>' for k, label, mx in DIMS)
         capped = f', capped by {e(t["cap"])}' if t.get("cap") else ""
         data = " ".join(f'data-{k}="{v:.1f}"' for k, v in dims.items())
-        rows.append(f"""<tr class="t-{tone(t)}" data-t="{t["token"]}" data-rank="{i}" data-score="{comp:.1f}" {data}>
+        rows.append(f"""<tr class="t-{tone(t)}{" pg-off" if i > 10 else ""}" data-t="{t["token"]}" data-rank="{i}" data-score="{comp:.1f}" {data}>
 <td class="num">{i}</td><td class="who"><div class="who-top"><span data-l="seal">{seal_or_chip(s)}</span>{tref(t, up)}</div>
 {f'<div class="tsub">{sub}</div>' if sub else ""}<span class="mheat show-sm" title="Product, Build, Team, Work, Integrity">{strip}</span></td>
 <td class="trust">{status_badge(t["status"])}{"".join(caution_pill(f) for f in cautions(t))}</td>
@@ -902,7 +902,7 @@ def board_table(board: list[dict], now: int, up: str = "") -> str:
             + "".join(sort_th(k, f"{label}<small>of {mx}</small>", "heat hide-sm", tip=DIM_ASK[k]) for k, label, mx in DIMS)
             + sort_th("mcap", "Mkt cap", "numcol mkt first hide-sm") + sort_th("vol", "24h vol", "numcol mkt hide-sm")
             + sort_th("curve", "Curve", "mkt hide-sm"))
-    return f"""{board_key()}<div class="scroll"><table class="list sortable board"><thead>{group}<tr>{head}</tr></thead>
+    return f"""{board_key()}<div class="scroll"><table class="list sortable board" data-per="10" data-label="Pages of the board"><thead>{group}<tr>{head}</tr></thead>
 <tbody>{"".join(rows)}</tbody></table></div>"""
 
 
@@ -919,13 +919,78 @@ def board_key() -> str:
             + f'<li class="k-sm"><span class="mheat" style="margin:0">{strip}</span><span>Product, Build, Team, Work, Integrity</span></li></ul>')
 
 
-def linked_line(t: dict, up: str = "") -> str:
-    """Under a token flagged for its money: the confirmed copy it's linked to."""
-    via = t["verdict"].get("via") or {}
-    if not via.get("token"):
-        return "Launched from an impersonator's wallet."
-    ref = tref({"token": via["token"], "symbol": via.get("symbol"), "orbio_agent": via.get("vault_id"), "name": None}, up, "tok inline")
-    return f"Launched from an impersonator's wallet: linked to {ref}."
+# an impersonator's row leads with why it's fake: a red reason, the evidence (the project's own words, the contract it
+# claims instead, or the confirmed copy the wallet is tied to), then the numbers behind it, worst first
+REASON = {"disowned": "Disowned by its project", "contract": "Not the project's contract", "wallet": "Copycat's wallet",
+          "chain": "Copycat's funding", "other": "Impersonator"}
+ICON["stop"] = ('<path d="M5.3 1.5h5.4l3.8 3.8v5.4l-3.8 3.8H5.3l-3.8-3.8V5.3z" fill="none" stroke="currentColor" stroke-width="1.5" '
+                'stroke-linejoin="round"/><path d="M5.8 5.8l4.4 4.4M10.2 5.8l-4.4 4.4" stroke="currentColor" stroke-width="1.6" '
+                'stroke-linecap="round"/>')
+
+
+def handle_link(t: dict, who: str) -> str:
+    """The project channel the verdict rests on, linked when the file has it: @handle for an X account, the address for
+    a site (the reason names a site by its short key, "agraris")."""
+    url = next((i["url"] for i in t.get("identities") or [] if i["binding"] in ("contradicted", "disavowed")), "")
+    return (link(url, who) if who.startswith("@") else link(url)) if url else e(who)
+
+
+def scam_reason(t: dict, up: str = "") -> tuple[str, str]:
+    """(kind, the evidence as HTML). The verdict's reason (proof_index.explain) is one sentence the Telegram alerts embed;
+    the list takes it apart so the project's quote, or the copy behind the wallet, is what the eye lands on."""
+    v = t["verdict"]
+    why = v.get("why") or ""
+    rc = "".join(f" {link(u, 'Receipt', 'rcpt')}" for u in (v.get("receipts") or [])[:1])
+    if v.get("kind") == "linked":
+        via = v.get("via") or {}
+        ref = (tref({"token": via["token"], "symbol": via.get("symbol"), "orbio_agent": via.get("vault_id"), "name": None},
+                    up, "tok inline") if via.get("token") else "a confirmed copy")
+        if "the same wallet launched" in why:
+            return "wallet", f"The wallet that launched it also launched {ref}, a confirmed copy."
+        m = re.search(r"and (\d+) other confirmed cop", why)
+        more = f" and {m.group(1)} other confirmed {'copy' if m.group(1) == '1' else 'copies'}" if m else ", a confirmed copy"
+        return "chain", f"Funded through the same chain of wallets that launched {ref}{more}."
+    m = re.match(r"(@\w+) disowns it: “(.*)”\s*(.*)$", why, re.S)
+    if m:
+        return "disowned", (f'<blockquote>“{e(m.group(2))}”</blockquote><p class="cite">{handle_link(t, m.group(1))}'
+                            f'{f", {e(m.group(3))}" if m.group(3) else ""}{rc}</p>')
+    m = re.match(r"not the token (\S+) claims(?: \(it claims (.*?)\))?(.*)$", why, re.S)
+    if m:  # (.*) after it: a cluster's "; it shares that identity with the claimed token"
+        return "contract", (f"{handle_link(t, m.group(1))} lists a different contract"
+                            + (f": <code>{e(m.group(2))}</code>" if m.group(2) else "") + f"{e(m.group(3))}.{rc}")
+    return "other", e(sentence(why)) + rc
+
+
+def scam_facts(t: dict, kind: str, up: str = "") -> list[tuple[str, str]]:
+    """(bad|warn|ok|"", html): what its wallet has launched, how new the wallet was, where it sits among tokens with its
+    ticker, and the real token when the project has one."""
+    out = []
+    dev = (t.get("trader") or {}).get("dev") or {}
+    others, fakes = dev.get("other_launches") or 0, dev.get("impersonators") or 0
+    if others:
+        out.append(("bad" if fakes else "warn" if others >= 3 else "",
+                    f"Its wallet launched <b>{others}</b> other token{'' if others == 1 else 's'}"
+                    + (f", <b>{fakes}</b> of them confirmed {'copy' if fakes == 1 else 'copies'}" if fakes else "")))
+    elif dev:
+        out.append(("", "First launch from its wallet"))
+    if dev.get("first_seen") and t.get("launched_at") and t["launched_at"] >= dev["first_seen"]:
+        age = t["launched_at"] - dev["first_seen"]
+        out.append(("bad" if age < DAY else "warn" if age < 30 * DAY else "", f"Wallet <b>{e(fmt_span(age))}</b> old at launch"))
+    tk = (t.get("trader") or {}).get("ticker") or {}
+    if (tk.get("total") or 0) > 1:
+        out.append(("", f"{ordinal(tk['rank'])} of <b>{tk['total']}</b> tokens named ${e(t['symbol'] or '?')}"))
+    if kind in ("wallet", "chain"):  # flagged for its money: name the identity it borrows
+        handle = next((m.group(1) for i in t.get("identities") or []
+                       if (m := re.fullmatch(r"https?://(?:www\.)?(?:x|twitter)\.com/(\w+)/?", i.get("url") or ""))), None)
+        if handle:
+            out.append(("", f"Claims to be {link(f'https://x.com/{handle}', '@' + handle)}"))
+    real = [x for x in ((t.get("related") or {}).get("claimed") or []) if x["token"] != t["token"]]
+    if real:
+        out.append(("ok", f"Real token: {tref(real[0], up, 'tok inline')}"))
+    elif kind == "disowned":
+        out.append(("", "No real token launched yet"))
+    order = {"bad": 0, "warn": 1, "": 2, "ok": 3}
+    return sorted(out, key=lambda f: order[f[0]])
 
 
 def scam_list(ts: list[dict], now: int, up: str = "", searchable: bool = False) -> str:
@@ -933,14 +998,13 @@ def scam_list(ts: list[dict], now: int, up: str = "", searchable: bool = False) 
         return '<p class="muted">None caught yet.</p>'
     out = []
     for t in ts:
-        real = [x for x in ((t.get("related") or {}).get("claimed") or []) if x["token"] != t["token"]]
-        target = next((i["url"] for i in t.get("identities") or [] if i["binding"] in ("contradicted", "disavowed")), "")
-        rc = t["verdict"]["receipts"][:1]
+        kind, ev = scam_reason(t, up)
+        facts = "".join(f'<li class="{c}"><i></i><span>{h}</span></li>' for c, h in scam_facts(t, kind, up))
         attr = f' data-search="{e(search_key(t))}"' if searchable else ""
-        out.append(f"""<li{attr}><div class="row">{tref(t, up)}{chip(state_of(t, now))}<span class="age">{when(t["launched_at"])}</span></div>
-<p>{e(sentence(t["verdict"]["why"]))}{"".join(f" {link(u, 'Receipt', 'rcpt')}" for u in rc)}</p>
-<p class="real">{linked_line(t, up) if state_of(t, now) == "linked" else f"Real token: {tref(real[0], up, 'tok inline')}" if real else f"Copies {link(target) if target else 'a real project'}: no real token launched yet."}</p></li>""")
-    return f'<ul class="scams">{"".join(out)}</ul>'
+        out.append(f"""<li class="imp"{attr}><div class="imp-id">{tref(t, up)}<div class="imp-meta">
+<span class="rbadge" title="{e(STATE_TEXT[state_of(t, now)])}">{icon("stop")}{REASON[kind]}</span><span class="age">{when(t["launched_at"])}</span></div></div>
+<div class="imp-body"><div class="imp-ev">{ev}</div>{f'<ul class="imp-facts">{facts}</ul>' if facts else ""}</div></li>""")
+    return f'<ul class="imps">{"".join(out)}</ul>'
 
 
 def sort_th(key: str, label: str, cls: str = "", order: str = "", tip: str = "") -> str:
@@ -991,8 +1055,9 @@ def scams_page(feed: dict) -> str:
     now = feed["generated_at"]
     scams = sorted((t for t in feed["tokens"] if t["verdict"]["verdict"] == "scam"), key=lambda t: -(t["launched_at"] or 0))
     return f"""<section class="page-head"><h1>Impersonators caught</h1><p class="sub">{len(scams)} tokens that copy a real
-project's identity: {scam_split(scams)}. Orbio agents show their number (#). A token is marked an impersonator only when an
-official channel lists a different contract, or says the token isn't theirs.</p></section>
+project's identity: {scam_split(scams)}. Orbio agents show their number (#). A token is marked an impersonator when an
+official channel lists a different contract or says the token isn't theirs, or when it was launched from the wallet, or the
+chain of wallets, behind a confirmed copy.</p></section>
 <input class="filter" type="search" placeholder="Filter by ticker, name or address" aria-label="Filter impersonators">
 {scam_list(scams, now, searchable=True)}"""
 
@@ -1778,7 +1843,7 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .filters button span{font:500 12px var(--mono);color:var(--muted)}
 .filters button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:var(--sheet)}.filters button[aria-pressed=true] span{color:inherit;opacity:.7}
 .feed{list-style:none;margin:0;padding:0;display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(min(100%,330px),1fr))}
-.feed>.card.pg-off{display:none}
+.feed>.card.pg-off,tr.pg-off{display:none}
 .pager{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;margin:18px 0 0}
 .pager button{font:600 13px var(--mono);min-width:38px;padding:8px 12px;border-radius:999px;border:1px solid var(--rule-2);background:var(--sheet);
   color:var(--ink-2);cursor:pointer}.pager button:hover:not(:disabled){color:var(--ink);border-color:var(--ink-2)}
@@ -1879,10 +1944,20 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .bar{display:block;height:6px;border-radius:3px;background:var(--rule);overflow:hidden}.bar>span{display:block;height:100%;background:var(--ink)}
 .dims.full{flex-direction:column;gap:9px;margin-top:14px}.dims.full .dim{display:grid;grid-template-columns:78px 1fr 58px;align-items:center;gap:10px}
 .dims.full .bar{height:8px}.dl{font-size:13.5px;color:var(--ink-2)}.dv{text-align:right;font:600 14px var(--mono);font-variant-numeric:tabular-nums}.dv small{color:var(--muted);font-weight:400}
-.scams{list-style:none;margin:0;padding:0;background:var(--sheet);border:1px solid var(--rule);border-radius:12px}
-.scams li{padding:13px 16px;border-top:1px solid var(--rule)}.scams li:first-child{border-top:0}
-.scams .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.scams .age{margin-left:auto;color:var(--muted);font:12px var(--mono)}
-.scams p{margin:5px 0 0;font-size:14px;color:var(--ink-2);overflow-wrap:anywhere}.scams .real{color:var(--muted)}
+.imps{list-style:none;margin:0;padding:0;background:var(--sheet);border:1px solid var(--rule);border-radius:12px;overflow:hidden}
+.imp{display:grid;grid-template-columns:minmax(210px,28%) minmax(0,1fr);gap:10px 24px;padding:16px 18px 16px 20px;border-top:1px solid var(--rule);box-shadow:inset 3px 0 0 var(--bad)}
+.imp:first-child{border-top:0}.imp-id{min-width:0}.imp-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:8px}
+.imp-meta .age{color:var(--muted);font:12px var(--mono)}.imp-body{min-width:0}
+.rbadge{display:inline-flex;align-items:center;gap:6px;font:700 11.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--bad);background:var(--bad-bg);padding:4px 10px 4px 7px;border-radius:999px;white-space:nowrap;cursor:help}
+.imp-ev{font-size:15.5px;line-height:1.45;color:var(--ink);overflow-wrap:anywhere}.imp-ev code{font:500 13.5px var(--mono);color:var(--ink-2)}
+.imp-ev blockquote{margin:0;padding:1px 0 1px 13px;border-left:3px solid var(--bad);font-size:16px;font-weight:500}
+.imp-ev .cite{margin:5px 0 0 16px;font-size:13px;color:var(--muted)}
+.imp-facts{display:flex;flex-wrap:wrap;gap:6px;list-style:none;margin:11px 0 0;padding:0}
+.imp-facts li{--st:var(--rule-2);display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--ink-2);background:var(--sheet-2);border:1px solid var(--rule);border-radius:7px;padding:4px 10px 4px 8px}
+.imp-facts li>i{flex:none;width:7px;height:7px;border-radius:50%;background:var(--st)}.imp-facts b{font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink)}
+.imp-facts .bad{--st:var(--bad);background:var(--bad-bg);border-color:transparent;color:var(--ink)}.imp-facts .bad b{color:var(--bad)}
+.imp-facts .warn{--st:var(--warn)}.imp-facts .warn b{color:var(--warn)}.imp-facts .ok{--st:var(--ok)}
+@media (max-width:700px){.imp{grid-template-columns:1fr;gap:9px;padding:14px 14px 14px 16px}.imp-ev,.imp-ev blockquote{font-size:15px}}
 .more{margin:14px 0 0;font-weight:600}
 .how{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}
 .how>div{background:var(--sheet);border:1px solid var(--rule);border-radius:12px;padding:16px}.how p{margin:10px 0 0;font-size:14px;color:var(--ink-2)}
@@ -2368,12 +2443,22 @@ JS = r"""
     var nav=document.getElementById('pager');
     if(!nav){nav=document.createElement('nav');nav.id='pager';nav.className='pager';nav.setAttribute('aria-label','Pages of new launches');
       list.parentNode.insertBefore(nav,list.nextSibling)}
-    nav.hidden=pages<2;if(pages<2){nav.innerHTML='';return}
-    var nums=[];for(var p=1;p<=pages;p++){if(p===1||p===pages||Math.abs(p-feedPage)<=1)nums.push(p);else if(nums[nums.length-1]!=='…')nums.push('…')}
-    nav.innerHTML='<button type="button" data-page="'+(feedPage-1)+'"'+(feedPage===1?' disabled':'')+'>← Newer</button>'+
-      nums.map(function(p){return p==='…'?'<span class="gap">…</span>':'<button type="button" data-page="'+p+'"'+(p===feedPage?' aria-current="page"':'')+'>'+p+'</button>'}).join('')+
-      '<button type="button" data-page="'+(feedPage+1)+'"'+(feedPage===pages?' disabled':'')+'>Older →</button>'+
-      '<span class="pg-count">'+((feedPage-1)*PAGE+1)+'–'+Math.min(cards.length,feedPage*PAGE)+' of '+cards.length+'</span>'}
+    nav.hidden=pages<2;nav.innerHTML=pages<2?'':pagerHtml(feedPage,pages,cards.length,PAGE,'data-page','← Newer','Older →')}
+  function pagerHtml(cur,pages,n,per,attr,prev,next){
+    var nums=[];for(var p=1;p<=pages;p++){if(p===1||p===pages||Math.abs(p-cur)<=1)nums.push(p);else if(nums[nums.length-1]!=='…')nums.push('…')}
+    return '<button type="button" '+attr+'="'+(cur-1)+'"'+(cur===1?' disabled':'')+'>'+prev+'</button>'+
+      nums.map(function(p){return p==='…'?'<span class="gap">…</span>':'<button type="button" '+attr+'="'+p+'"'+(p===cur?' aria-current="page"':'')+'>'+p+'</button>'}).join('')+
+      '<button type="button" '+attr+'="'+(cur+1)+'"'+(cur===pages?' disabled':'')+'>'+next+'</button>'+
+      '<span class="pg-count">'+((cur-1)*per+1)+'–'+Math.min(n,cur*per)+' of '+n+'</span>'}
+  // a long table in pages (the board: 10 rows a page, the rest already hidden by the build); a sort starts again at page 1
+  function pageTable(tbl){var per=+tbl.dataset.per,rows=[].slice.call(tbl.tBodies[0].rows),pages=Math.max(1,Math.ceil(rows.length/per)),
+      cur=Math.min(Math.max(1,+tbl.dataset.pg||1),pages);tbl.dataset.pg=cur;
+    rows.forEach(function(r,i){r.classList.toggle('pg-off',Math.floor(i/per)+1!==cur)});
+    var box=tbl.closest('.scroll')||tbl,nav=box.nextElementSibling;
+    if(!nav||!nav.classList.contains('tpager')){nav=document.createElement('nav');nav.className='pager tpager';
+      nav.setAttribute('aria-label',tbl.dataset.label||'Pages');box.parentNode.insertBefore(nav,box.nextSibling)}
+    nav.hidden=pages<2;nav.innerHTML=pages<2?'':pagerHtml(cur,pages,rows.length,per,'data-tpage','← Prev','Next →')}
+  document.querySelectorAll('table[data-per]').forEach(pageTable);
   function setFilter(k){filterKey=k;feedPage=1;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',x.dataset.filter===k?'true':'false')});
     var lg=document.querySelector('.maplegend');if(lg)lg.classList.toggle('filtering',k!=='all');applyFilter()}
   function markNew(){if(!seen)return;document.querySelectorAll('.card[data-t]').forEach(function(c){
@@ -2678,7 +2763,7 @@ JS = r"""
     th.closest('tr').querySelectorAll('th').forEach(function(x){x.removeAttribute('aria-sort')});
     th.setAttribute('aria-sort',desc?'descending':'ascending');
     var rows=[].slice.call(tb.rows);rows.sort(function(a,b){var x=sortVal(a,key),y=sortVal(b,key),c=typeof x==='string'?x.localeCompare(y):x-y;return desc?-c:c});
-    rows.forEach(function(r){tb.appendChild(r)})}
+    rows.forEach(function(r){tb.appendChild(r)});var tbl=th.closest('table');if(tbl.dataset.per){tbl.dataset.pg=1;pageTable(tbl)}}
   var q=document.getElementById('q'),res=document.getElementById('results'),idx=document.getElementById('idx');
   var all=idx?JSON.parse(idx.textContent):[];
   document.addEventListener('click',function(ev){
@@ -2693,6 +2778,9 @@ JS = r"""
     var sb=ev.target.closest('th[data-sort] button');if(sb){sortBy(sb.parentNode);return}
     var pg=ev.target.closest('#pager [data-page]');if(pg){feedPage=+pg.dataset.page;paginate();
       var fl=document.getElementById('feed');if(fl)scrollTo({top:fl.getBoundingClientRect().top+scrollY-90,behavior:CALM?'auto':'smooth'});return}
+    var tp=ev.target.closest('.tpager [data-tpage]');if(tp){var box=tp.parentNode.previousElementSibling,tbl=box.querySelector('table[data-per]')||box;
+      tbl.dataset.pg=tp.dataset.tpage;pageTable(tbl);var top=box.getBoundingClientRect().top;
+      if(top<0)scrollTo({top:top+scrollY-90,behavior:CALM?'auto':'smooth'});return}
     var vw=ev.target.closest('.mapview [data-view]');if(vw){setView(vw.dataset.view);return}
     if(res&&!res.contains(ev.target)&&ev.target!==q)res.hidden=true});
   document.querySelectorAll('.filter').forEach(function(f){f.addEventListener('input',function(){
