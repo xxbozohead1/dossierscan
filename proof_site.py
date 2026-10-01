@@ -505,7 +505,7 @@ def map_notes(t: dict, now: int) -> list[list[str]]:
         f = tk["first"] or {}
         head.append(["ok" if s == "verified" else "warn", f"{ordinal(tk['rank'])} ${sym}: the first"
                      + (f" (#{f['vault_id']})" if f.get("vault_id") else "")
-                     + f" launched {fmt_span((t['launched_at'] or 0) - (f.get('ts') or 0))} earlier"])
+                     + f" launched {fmt_span((t['launched_at'] or 0) - (f.get('ts') or 0))} earlier" + where_launched(f)])
     ln, dev = tc.get("launch") or {}, tc.get("dev") or {}
     if (ln.get("launch_block_buyers") or 0) >= 3:
         rest.append(["bad", f"Bundled: {ln['launch_block_buyers']} buyers in the launch block"])
@@ -772,15 +772,29 @@ project's post every minute.</p></div>
 </div>"""
 
 
+def where_launched(f: dict) -> str:
+    """", straight on Pons" for a first token that isn't an Orbio agent: it's not in the Orbio feed, so say where it is."""
+    return "" if f.get("vault_id") else ", straight on Pons"
+
+
+def first_link(f: dict, up: str = "") -> str:
+    """"the first", linked to its file when it has one here, else to the explorer."""
+    label = "the first" + (f" (#{e(f['vault_id'])})" if f.get("vault_id") else "")
+    if f.get("token") and (not ON_FILE or f["token"] in ON_FILE):
+        return f'<a href="{up}t/{e(f["token"])}.html">{label}</a>'
+    return link(f"{EXPLORER}/token/{f['token']}", f"{label} ↗") if f.get("token") else label
+
+
 def card(t: dict, now: int, up: str = "") -> str:
     s = state_of(t, now)
     rc = t["verdict"]["receipts"][:1]
     real = [x for x in ((t.get("related") or {}).get("claimed") or []) if x["token"] != t["token"]]
     extra = f'<p class="real">Real token: {tref(real[0], up, "tok inline")}</p>' if s == "scam" and real else ""
     tk = (t.get("trader") or {}).get("ticker")
-    if tk and tk["rank"] > 1 and s != "verified":  # not the first token with this ticker: say so where hunters scan
-        extra += (f'<p class="copynote">{ordinal(tk["rank"])} ${e(t["symbol"] or "?")}: the first launched '
-                  f'{e(fmt_span((t["launched_at"] or 0) - (tk["first"]["ts"] or 0)))} earlier</p>')
+    if tk and tk["rank"] > 1 and s != "verified":  # not the first token with this ticker: say so where hunters scan,
+        f = tk["first"] or {}                        # and link it (it may be a Pons launch, which isn't in this feed)
+        extra += (f'<p class="copynote">{ordinal(tk["rank"])} ${e(t["symbol"] or "?")}: {first_link(f, up)} launched '
+                  f'{e(fmt_span((t["launched_at"] or 0) - (f.get("ts") or 0)))} earlier{where_launched(f)}</p>')
     return f"""<li class="card" data-t="{t["token"]}" data-lt="{t["launched_at"] or 0}" data-state="{group_of(s)}">
 <div class="card-top"><span class="fileno">{fileno(t)}</span><span class="age">{when(t["launched_at"])}</span>{tools(t["token"])}</div>
 <div class="card-title">{tref(t, up, "tok stretch")}<span data-l="chip">{chip(s)}</span></div>
@@ -1053,7 +1067,7 @@ def trader_rows(t: dict, now: int) -> list[tuple[str, str, str]]:
         rows.append(("Original or copy", "ok" if s == "verified" else "warn",
                      f"{ordinal(tk['rank'])} token named ${sym}. The first, "
                      f"{tref({'token': f['token'], 'symbol': f['symbol'], 'orbio_agent': f.get('vault_id')}, '../', 'tok inline')}, "
-                     f"launched {e(gap)} earlier. "
+                     f"launched {e(gap)} earlier{where_launched(f)}. "
                      + ("The project's own channels confirm this one." if s == "verified" else "Check which one the project claims.")))
     dev = tc.get("dev") or {}
     if dev:
@@ -1695,7 +1709,8 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .card-top{display:flex;justify-content:space-between;gap:10px;font:500 11.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 .card-top .age{text-transform:none;letter-spacing:0}
 .card-title{display:flex;align-items:center;gap:10px;justify-content:space-between}
-.stretch::after{content:"";position:absolute;inset:0;border-radius:14px}.card .rcpt,.card .real a{position:relative;z-index:1}
+.stretch::after{content:"";position:absolute;inset:0;border-radius:14px}.card .rcpt,.card .real a,.card .copynote a{position:relative;z-index:1}
+.copynote a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 .card-nums{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0;padding:9px 0;border-block:1px dashed var(--rule)}
 .card-nums dt{font-size:11.5px;color:var(--muted)}.card-nums dd{margin:0;font:500 14px var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
 .card .why{margin:0;font-size:13.5px;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
