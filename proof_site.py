@@ -1666,6 +1666,12 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .filters button span{font:500 12px var(--mono);color:var(--muted)}
 .filters button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:var(--sheet)}.filters button[aria-pressed=true] span{color:inherit;opacity:.7}
 .feed{list-style:none;margin:0;padding:0;display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(min(100%,330px),1fr))}
+.feed>.card.pg-off{display:none}
+.pager{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;margin:18px 0 0}
+.pager button{font:600 13px var(--mono);min-width:38px;padding:8px 12px;border-radius:999px;border:1px solid var(--rule-2);background:var(--sheet);
+  color:var(--ink-2);cursor:pointer}.pager button:hover:not(:disabled){color:var(--ink);border-color:var(--ink-2)}
+.pager button[aria-current=page]{background:var(--ink);border-color:var(--ink);color:var(--sheet)}.pager button:disabled{opacity:.35;cursor:default}
+.pager .gap{color:var(--muted);padding:0 2px}.pager .pg-count{flex-basis:100%;text-align:center;font:12px var(--mono);color:var(--muted)}
 /* the feed's cards are glass, like the map's spheres: a see-through fill with a sheen, a rim lit from the top left and
    tinted by the verdict at the far corner, and the verdict's glow */
 .card{position:relative;border:0;border-radius:14px;padding:14px 16px 13px;display:flex;flex-direction:column;gap:9px;
@@ -2203,8 +2209,24 @@ JS = r"""
   function applyFilter(){var list=document.getElementById('feed');if(!list)return;
     list.querySelectorAll('.card').forEach(function(c){c.hidden=filterKey!=='all'&&c.dataset.state!==filterKey});
     MAPS.forEach(function(m){m.querySelectorAll('.bub').forEach(function(b){b.classList.toggle('dim',filterKey!=='all'&&b.dataset.state!==filterKey)})});
-    if(mcFor&&mcFor.classList.contains('dim'))hideCard()}
-  function setFilter(k){filterKey=k;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',x.dataset.filter===k?'true':'false')});
+    if(mcFor&&mcFor.classList.contains('dim'))hideCard();paginate()}
+  // the feed in pages, so the board below stays a short scroll away: 9 cards (3 rows) a page, 6 on a phone. Pages
+  // count the cards the filter shows; a new filter starts again at page 1, and new launches land on page 1
+  var feedPage=1,PAGE=matchMedia('(max-width: 600px)').matches?6:9;
+  function paginate(){var list=document.getElementById('feed');if(!list)return;
+    var cards=[].slice.call(list.children).filter(function(c){return c.classList.contains('card')&&!c.hidden}),
+      pages=Math.max(1,Math.ceil(cards.length/PAGE));feedPage=Math.min(Math.max(1,feedPage),pages);
+    cards.forEach(function(c,i){c.classList.toggle('pg-off',Math.floor(i/PAGE)+1!==feedPage)});
+    var nav=document.getElementById('pager');
+    if(!nav){nav=document.createElement('nav');nav.id='pager';nav.className='pager';nav.setAttribute('aria-label','Pages of new launches');
+      list.parentNode.insertBefore(nav,list.nextSibling)}
+    nav.hidden=pages<2;if(pages<2){nav.innerHTML='';return}
+    var nums=[];for(var p=1;p<=pages;p++){if(p===1||p===pages||Math.abs(p-feedPage)<=1)nums.push(p);else if(nums[nums.length-1]!=='…')nums.push('…')}
+    nav.innerHTML='<button type="button" data-page="'+(feedPage-1)+'"'+(feedPage===1?' disabled':'')+'>← Newer</button>'+
+      nums.map(function(p){return p==='…'?'<span class="gap">…</span>':'<button type="button" data-page="'+p+'"'+(p===feedPage?' aria-current="page"':'')+'>'+p+'</button>'}).join('')+
+      '<button type="button" data-page="'+(feedPage+1)+'"'+(feedPage===pages?' disabled':'')+'>Older →</button>'+
+      '<span class="pg-count">'+((feedPage-1)*PAGE+1)+'–'+Math.min(cards.length,feedPage*PAGE)+' of '+cards.length+'</span>'}
+  function setFilter(k){filterKey=k;feedPage=1;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',x.dataset.filter===k?'true':'false')});
     var lg=document.querySelector('.maplegend');if(lg)lg.classList.toggle('filtering',k!=='all');applyFilter()}
   function markNew(){if(!seen)return;document.querySelectorAll('.card[data-t]').forEach(function(c){
     if(+c.dataset.lt>seen&&!c.classList.contains('is-new')){c.classList.add('is-new');var f=c.querySelector('.fileno');
@@ -2521,6 +2543,8 @@ JS = r"""
     // the filter buttons, and the map's legend, which toggles: a second click on the same key shows everything again
     var fb=ev.target.closest('[data-filter]');if(fb){var k=fb.dataset.filter;setFilter(fb.closest('.maplegend')&&filterKey===k?'all':k);return}
     var sb=ev.target.closest('th[data-sort] button');if(sb){sortBy(sb.parentNode);return}
+    var pg=ev.target.closest('#pager [data-page]');if(pg){feedPage=+pg.dataset.page;paginate();
+      var fl=document.getElementById('feed');if(fl)scrollTo({top:fl.getBoundingClientRect().top+scrollY-90,behavior:CALM?'auto':'smooth'});return}
     var vw=ev.target.closest('.mapview [data-view]');if(vw){setView(vw.dataset.view);return}
     if(res&&!res.contains(ev.target)&&ev.target!==q)res.hidden=true});
   document.querySelectorAll('.filter').forEach(function(f){f.addEventListener('input',function(){
