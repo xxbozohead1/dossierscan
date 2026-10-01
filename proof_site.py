@@ -1518,7 +1518,7 @@ def case_tok(r: dict, by: dict, now: int, up: str) -> tuple[str, str]:
     """A launch named on a case page: its ticker and agent number, linked to its file (or the explorer), and its verdict
     now, which the page keeps current."""
     t = by.get(r.get("token"))
-    s = state_of(t, now) if t else "checking"
+    s = state_of(t, now) if t else (r.get("state") if r.get("state") in STATE else "checking")  # off the site: as recorded
     inner = f'<b>${e(r.get("symbol") or "?")}</b>' + (f' <span class="no">#{e(r["vault_id"])}</span>' if r.get("vault_id") else "")
     if t:
         return f'<a class="tok" href="{up}t/{e(r["token"])}.html">{inner}</a>', s
@@ -1530,12 +1530,14 @@ def beads(rows: list[dict], by: dict, now: int, up: str) -> str:
     out = []
     for r in rows:
         t = by.get(r.get("token"))
-        s = state_of(t, now) if t else "checking"
+        s = state_of(t, now) if t else (r.get("state") if r.get("state") in STATE else "checking")
         href = f'{up}t/{e(r["token"])}.html' if t else f'{EXPLORER}/token/{e(r.get("token"))}'
-        tip = f'${r.get("symbol") or "?"} #{r.get("vault_id")} · {STATE[s]} · launched {utc(r.get("ts"))}'
+        where = f'#{r["vault_id"]}' if r.get("vault_id") else "Pons"  # a launch straight on Pons has no agent number
+        tip = f'${r.get("symbol") or "?"} {where} · {STATE[s]} · launched {utc(r.get("ts"))}'
         out.append(f'<li class="v-{s}"><a href="{href}" title="{e(tip)}"><i></i><b>${e(r.get("symbol") or "?")}</b>'
-                   f'<span>#{e(r.get("vault_id"))}</span></a></li>')
-    counts = {s: sum(1 for r in rows if (state_of(by[r["token"]], now) if r.get("token") in by else "checking") == s) for s in STATE}
+                   f'<span>{e(where)}</span></a></li>')
+    counts = {s: sum(1 for r in rows if (state_of(by[r["token"]], now) if r.get("token") in by else
+                                        (r.get("state") if r.get("state") in STATE else "checking")) == s) for s in STATE}
     legend = "".join(f'<span class="v-{s}"><i></i>{STATE[s]} · {n}</span>' for s, n in counts.items() if n)
     return f'<ol class="beads">{"".join(out)}</ol><p class="beadkey">{legend}</p>'
 
@@ -1649,7 +1651,7 @@ def cases_page(cases: list[dict], feed: dict) -> str:
         tiles = "".join(f"<div><dd>{e(v)}</dd><dt>{e(k)}</dt></div>" for v, k in (c.get("tiles") or [])[:3])
         exhibit = ""
         if (b := c.get("beads")) and b.get("rows"):
-            dots = "".join(f'<li class="v-{state_of(by[r["token"]], now) if r.get("token") in by else "checking"}" '
+            dots = "".join(f'<li class="v-{state_of(by[r["token"]], now) if r.get("token") in by else (r.get("state") if r.get("state") in STATE else "checking")}" '
                            f'title="${e(r.get("symbol") or "?")} #{e(r.get("vault_id"))}"></li>' for r in b["rows"])
             exhibit = f'<div class="cf-exhibit"><p class="cf-k">Exhibit A · the launches, in order</p><ol class="cf-dots">{dots}</ol></div>'
         faces.append(f"""<section class="cf-face cf-doc" id="cf-doc-{i}" aria-label="{e(no)}"><div class="cf-paper">
