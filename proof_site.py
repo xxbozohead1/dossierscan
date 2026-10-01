@@ -240,10 +240,21 @@ NAV = (("index.html#live", "New launches"), ("index.html#board", "Board"), ("sca
        ("token.html", "$DOSSIER"), ("method.html", "Method"), ("api.html", "API"))
 
 
+# dark is the default; the switch keeps a viewer's choice of light in this browser. THEME_BOOT sits in <head> and applies
+# it before the page paints, so a light-mode reader never sees a flash of dark
+THEME_BOOT = ('<script>try{if(localStorage.getItem("dossier.theme")==="light")'
+              'document.documentElement.setAttribute("data-theme","light")}catch(e){}</script>')
+THEME_SWITCH = ('<button type="button" class="theme" role="switch" aria-checked="false" aria-label="Light mode" title="Light mode">'
+                '<svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" '
+                'fill="currentColor"/></svg><svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5" '
+                'fill="currentColor"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3M4.6 4.6l2.1 2.1M17.3 17.3l2.1 2.1M4.6 19.4l2.1-2.1'
+                'M17.3 6.7l2.1-2.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="knob"></span></button>')
+
+
 def header(up: str = "") -> str:
     nav = "".join(f'<a href="{up}{href}">{label}</a>' for href, label in NAV)
     return (f'<header class="top"><div class="wrap"><a class="brand" href="{up}index.html">{MARK}{NAME}</a>'
-            f'<nav aria-label="Sections">{nav}</nav></div></header>')
+            f'<nav aria-label="Sections">{nav}</nav>{THEME_SWITCH}</div></header>')
 
 
 SOURCE_URL = "https://github.com/xxbozohead1/dossierscan"  # the public half: this site, the whitepaper, the server setup
@@ -320,7 +331,7 @@ def page(title: str, body: str, feed: dict, depth: int = 0, desc: str = "", path
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{e(title)}</title><meta name="description" content="{e(desc or DESC)}">{share_tags(title, desc or DESC, path)}
 <link rel="icon" href="{FAVICON}"><link rel="apple-touch-icon" href="{up}assets/logo.png?v={file_version(LOGO)}"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="{FONTS}"><link rel="stylesheet" href="{up}assets/style.css?v={v}"></head>
+<link rel="stylesheet" href="{FONTS}"><link rel="stylesheet" href="{up}assets/style.css?v={v}">{THEME_BOOT}</head>
 <body>{header(up)}
 <main class="wrap">{body}</main>
 {footer(feed, up)}
@@ -1306,18 +1317,16 @@ def strategy_page(feed: dict) -> str:
 
 # ----------------------------------------------------------------- assets
 
-# light palette on :root; the dark one below is applied by the OS preference (unless the viewer chose light) and by
-# an explicit data-theme="dark"
+# dark for everyone by default (the OS preference doesn't change it); light when the viewer picks it with the switch in
+# the header, which sets data-theme="light" on <html> before the page paints (THEME_BOOT)
 CSS = """
-:root{--bg:#e8ebf0;--sheet:#fff;--sheet-2:#f4f6f9;--ink:#0d1522;--ink-2:#39455a;--muted:#657084;--rule:#d5dae2;--rule-2:#b8c0cc;
+:root{--display:"Bricolage Grotesque","Instrument Sans",system-ui,sans-serif;--sans:"Instrument Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+--mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;@@DARK@@}
+:root[data-theme="light"]{color-scheme:light;--bg:#e8ebf0;--sheet:#fff;--sheet-2:#f4f6f9;--ink:#0d1522;--ink-2:#39455a;--muted:#657084;--rule:#d5dae2;--rule-2:#b8c0cc;
 --accent:#2d49d8;--accent-bg:#e5e9fc;--scrim:rgba(232,235,240,.9);
 --glass:rgba(255,255,255,.52);--glass-hi:rgba(255,255,255,.9);--glass-spec:rgba(255,255,255,.95);--rim-hi:#fff;--rim-lo:rgba(13,21,34,.1);
 --ok-glow:rgba(11,122,75,.18);--bad-glow:rgba(204,37,57,.16);--accent-glow:rgba(45,73,216,.18);
---amb-a:rgba(45,73,216,.16);--amb-b:rgba(11,122,75,.12);--amb-c:rgba(204,37,57,.09);--ok:#0b7a4b;--ok-bg:#e0f2e8;--bad:#cc2539;--bad-bg:#fbe6e9;--warn:#9a6300;--warn-bg:#faefd4;
---display:"Bricolage Grotesque","Instrument Sans",system-ui,sans-serif;--sans:"Instrument Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
---mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){@@DARK@@}}
-:root[data-theme="dark"]{@@DARK@@}
+--amb-a:rgba(45,73,216,.16);--amb-b:rgba(11,122,75,.12);--amb-c:rgba(204,37,57,.09);--ok:#0b7a4b;--ok-bg:#e0f2e8;--bad:#cc2539;--bad-bg:#fbe6e9;--warn:#9a6300;--warn-bg:#faefd4}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 var(--sans)}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
@@ -1333,6 +1342,15 @@ h2{font-size:22px;line-height:1.2;font-weight:700;font-stretch:92%}h3{font-size:
 .brand{display:flex;align-items:center;gap:8px;color:var(--ink);font:800 21px/1 var(--display);font-stretch:85%;letter-spacing:-.01em}
 .brand:hover{text-decoration:none}.mark{width:26px;height:26px;color:var(--ok)}
 .top nav{display:flex;gap:4px 18px;flex-wrap:wrap;font-weight:500}.top nav a{color:var(--ink-2)}
+.theme{position:relative;flex:none;display:inline-flex;align-items:center;justify-content:space-between;width:54px;height:28px;
+  margin-left:auto;padding:0 7px;border:1px solid var(--rule-2);border-radius:999px;background:var(--sheet-2);color:var(--muted);cursor:pointer}
+.theme svg{position:relative;z-index:1;width:13px;height:13px;transition:color .2s}
+.theme .knob{position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:var(--ink);
+  box-shadow:0 1px 4px rgba(0,0,0,.35);transition:transform .22s cubic-bezier(.3,.7,.3,1)}
+.theme[aria-checked=true] .knob{transform:translateX(26px)}
+.theme[aria-checked=false] .moon,.theme[aria-checked=true] .sun{color:var(--sheet)}
+.theme:hover{border-color:var(--ink-2)}.theme:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.theme .knob{transition:none}}
 main{padding-block:28px 56px}[hidden]{display:none!important}
 .stack{display:flex;flex-direction:column;gap:52px}.filepage{display:flex;flex-direction:column;gap:16px}.filepage>.crumb{margin:0}
 .eyebrow{font:600 12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 12px}
@@ -1641,7 +1659,8 @@ th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] bu
 .flywheel li:not(:last-child)::after{content:"↓";right:auto;left:50%;top:auto;bottom:-21px;transform:translateX(-50%)}}
 @media (max-width:900px){.cols{grid-template-columns:1fr}.how{grid-template-columns:1fr}}
 @media (max-width:560px){
-.top .wrap{flex-direction:column;align-items:stretch;flex-wrap:nowrap;gap:4px;padding-block:12px 2px}
+.top .wrap{position:relative;flex-direction:column;align-items:stretch;flex-wrap:nowrap;gap:4px;padding-block:12px 2px}
+.theme{position:absolute;top:12px;right:16px}
 .top nav{flex-wrap:nowrap;overflow-x:auto;gap:2px;margin:0 -16px;padding:0 10px;scrollbar-width:none;
   -webkit-mask-image:linear-gradient(90deg,#000 85%,transparent);mask-image:linear-gradient(90deg,#000 85%,transparent)}
 .top nav::-webkit-scrollbar{display:none}.top nav a{flex:none;padding:9px 8px;border-radius:8px}
@@ -1671,6 +1690,13 @@ CSS = CSS.replace("@@DARK@@", DARK)
 JS = r"""
 (function(){
   var D=window.DOSSIER||{href:'t/{t}.html',live:'api/v1/live.json'},LIVE=window.DOSSIER_LIVE||null;
+  // the light/dark switch: dark unless this browser chose light (THEME_BOOT applied that before the page painted)
+  var TS=document.querySelector('.theme'),HTML=document.documentElement;
+  function themeSync(){if(TS)TS.setAttribute('aria-checked',HTML.getAttribute('data-theme')==='light'?'true':'false')}
+  if(TS)TS.addEventListener('click',function(){var light=HTML.getAttribute('data-theme')!=='light';
+    if(light)HTML.setAttribute('data-theme','light');else HTML.removeAttribute('data-theme');
+    try{localStorage.setItem('dossier.theme',light?'light':'dark')}catch(e){}themeSync()});
+  themeSync();
   var LABEL={verified:'Verified',scam:'Impersonator',checking:'Checking',unverified:'Unverified'},SUB='₀₁₂₃₄₅₆₇₈₉';
   var ORDER={verified:3,checking:2,unverified:1,scam:0},filterKey='all';
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
@@ -2155,7 +2181,7 @@ def build_single(feed: dict, name: str = NAME) -> str:
         chrome_top, chrome_bottom = to_hash(header()), to_hash(footer(feed))
         cfg = inert(json.dumps({"href": "#t-{t}", "live": "api/v1/live.json"}))
         live = inert(json.dumps(live_data(feed), separators=(",", ":"), ensure_ascii=False))
-        return f"""<title>{e(name)} Orbio Files</title>
+        return f"""<title>{e(name)} Orbio Files</title>{THEME_BOOT}
 <link rel="stylesheet" href="{FONTS}">
 <style>{CSS.strip()}</style>
 {chrome_top}
