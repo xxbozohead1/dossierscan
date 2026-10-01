@@ -460,6 +460,24 @@ def bubble_r(t: dict, base: float = 0.0) -> float:
     return max(8.0, min(44.0, 7 + 4.2 * math.sqrt(m / 1000)))
 
 
+TOP_MAP = 30  # the map's "Biggest" view: at most this many Orbio agents
+
+
+def biggest(ts: list[dict], base: float = 0.0, n: int = TOP_MAP) -> list[dict]:
+    """The Orbio agents worth the most right now, of any age: the map's second view, so a $1M agent from last week
+    isn't missing from a page whose map shows only the last 48 hours. Only agents worth a fifth more than every launch
+    starts at: below that the list fills up with launches nobody has traded."""
+    big = [t for t in ts if t.get("orbio_agent") and ((t.get("market") or {}).get("mcap_usd") or 0) > max(0.0, base) * 1.2]
+    return sorted(big, key=lambda t: -t["market"]["mcap_usd"])[:n]
+
+
+def top_r(t: dict, high: float) -> float:
+    """A radius on the Biggest map: 50 for the biggest, the rest by market cap on a squeezed scale, so one at a
+    hundredth of the top is still 10 rather than a dot."""
+    m = (t.get("market") or {}).get("mcap_usd") or 0
+    return max(10.0, min(50.0, 50 * (m / high) ** .35)) if high > 0 else 10.0
+
+
 def map_notes(t: dict, now: int) -> list[list[str]]:
     """The map card's short list for one bubble: original or copy first, then the worst of the rest of the trader's
     card (the same thresholds as trader_rows), four at most. Plain text: the page script escapes it."""
@@ -548,20 +566,51 @@ def orb(x: float, y: float, r: float) -> str:
             f'<circle class="glint" cx="{x - r * .5:.1f}" cy="{y - r * .36:.1f}" r="{max(.8, r * .06):.1f}"/>')
 
 
-def launch_map(ts: list[dict], now: int, base: float = 0.0) -> str:
-    """Every launch of the last 48 hours as a bubble: sized by market cap, coloured by verdict, and tokens sharing a
-    ticker packed inside one ring, so the real one (or the lack of one) shows among its copies at a glance. The page
-    script adds the interaction: a card with each bubble's numbers, a ticker's family lit up together, and the legend
-    as a filter. What it needs beyond the live numbers is in the #mapx block."""
-    if len(ts) < 2:
+def launch_map(ts: list[dict], now: int, base: float = 0.0, top: list[dict] | None = None) -> str:
+    """The home page's map, in two views. New: every launch of the last 48 hours, sized by market cap above where
+    every launch starts, older ones paler. Biggest (given `top`, from biggest()): the Orbio agents worth the most now,
+    of any age. Both colour by verdict and pack tokens sharing a ticker inside one ring, so the real one (or the lack
+    of one) shows among its copies at a glance. A switch flips between them: each view is its own svg with its own
+    #mapx-<view> block, and the page script moves the one on show. One legend filters both."""
+    views = []
+    if len(ts) >= 2:
+        views.append(("new", map_svg(ts, now, lambda t: bubble_r(t, base), "new", base)))
+    if top and len(top) >= 2:
+        high = max((t.get("market") or {}).get("mcap_usd") or 0 for t in top)
+        views.append(("top", map_svg(top, now, lambda t: top_r(t, high), "top")))
+    if not views:
         return ""
+    keys = [("verified", "Verified"), ("scam", "Impersonator"), ("checking", "Checking")]
+    if any(v == "top" for v, _ in views):  # agents past their 72 hours unclaimed: only the Biggest view has them
+        keys.append(("unverified", "Unverified"))
+    legend = "".join(f'<button type="button" class="v-{k}{" for-top" if k == "unverified" else ""}" data-filter="{k}" '
+                     f'aria-pressed="false"><i></i>{label}</button>' for k, label in keys)
+    switch = ""
+    if len(views) == 2:
+        switch = ('<div class="mapview" role="group" aria-label="Map view">'
+                  '<button type="button" data-view="new" aria-pressed="true">New · 48 h</button>'
+                  '<button type="button" data-view="top" aria-pressed="false">Biggest on Orbio</button></div>')
+    n_top = len(top or [])
+    notes = ('<span class="for-new">Size: market cap above where every launch starts · paler: older, gone after 48 h · '
+             'a ring holds the tokens sharing a ticker · a pulse: launched in the last hour</span>'
+             f'<span class="for-top">Size: market cap · the {n_top} Orbio agents worth the most now, any age · '
+             'a ring holds the tokens sharing a ticker</span>')
+    return (f'<figure class="lmapbox" data-view="{views[0][0]}">{switch}'
+            f'<svg class="lmapdefs" aria-hidden="true" focusable="false">{orb_defs()}</svg>{"".join(v for _, v in views)}'
+            f'<figcaption class="maplegend">{legend}<span class="muted">{notes} · <span class="on-hover">point '
+            'at a bubble for its numbers, click for its file, drag to fling it</span><span class="on-touch">tap a bubble '
+            'for its numbers, tap again for its file</span></span></figcaption></figure>')
+
+
+def map_svg(ts: list[dict], now: int, size, mode: str = "new", base: float = 0.0) -> str:
+    """One view of the launch map, sized by `size`: an svg of bubbles and rings, then its #mapx-<mode> block."""
     fams: dict[str, list[dict]] = {}
     for t in ts:
         fams.setdefault((t["symbol"] or "?").upper(), []).append(t)
     items = []  # (radius, [(token, dx, dy, r)], ticker or None)
     for sym, members in fams.items():
-        members.sort(key=lambda t: -bubble_r(t, base))
-        rs = [bubble_r(t, base) for t in members]
+        members.sort(key=lambda t: -size(t))
+        rs = [size(t) for t in members]
         if len(members) == 1:
             items.append((rs[0], [(members[0], 0.0, 0.0, rs[0])], None))
             continue
@@ -577,7 +626,9 @@ def launch_map(ts: list[dict], now: int, base: float = 0.0) -> str:
     x0, y0 = min(xs) - 6, min(ys) - 6
     w, h = max(xs) - x0 + 6, max(ys) - y0 + 6
     out, labels = [], []
-    extra: dict = {"t": {}, "f": [], "b": round(base)}  # per token: notes, ticker rank; per ring: members; b: sizes' base
+    # per token: notes, ticker rank; per ring: members; b: the sizes' base (for a launch that lands while the page is
+    # open); k: which view
+    extra: dict = {"t": {}, "f": [], "b": round(base), "k": mode}
     # each lone bubble, or each ring with its bubbles, is one body: drawn around (0, 0) and put in place by a translate,
     # so the page script can float, push, drag and fling it by changing that alone (data-x/y: its place in the layout)
     for (fx, fy), (R, inner, sym) in zip(centres, items):
@@ -600,29 +651,26 @@ def launch_map(ts: list[dict], now: int, base: float = 0.0) -> str:
             mc = (t.get("market") or {}).get("mcap_usd")
             tip = f'${t["symbol"] or "?"}' + (f' #{t["orbio_agent"]}' if t.get("orbio_agent") else "") + f" · {STATE[s]}"                 + (f" · {usd(mc)} market cap" if mc else "")
             label = (f'<text class="d" x="{x:.1f}" y="{y:.1f}" style="font-size:{min(13, r * .42):.1f}px">'
-                     f'{e((t["symbol"] or "?")[:7])}</text>') if r >= 17 else ""
+                     f'{e((t["symbol"] or "?")[:8 if r >= 34 else 7])}</text>') if r >= 17 else ""
             if r >= 30:  # a phone shows the map at about half size: only big bubbles get a (bigger) label there
                 label += f'<text class="m" x="{x:.1f}" y="{y:.1f}">{e((t["symbol"] or "?")[:int(2 * r * .85 / 10.8)])}</text>'
             tk = (t.get("trader") or {}).get("ticker") or {}
             extra["t"][t["token"]] = {k: v for k, v in (("n", map_notes(t, now)),
                                                         ("o", tk.get("rank") if (tk.get("total") or 0) > 1 else None)) if v}
+            # every launch in the last 48 hours is still being checked if nobody has claimed it (72 hours), so on the
+            # New view an unclaimed one filters as checking; the Biggest view also has agents past that
+            st = "checking" if s == "unverified" and mode == "new" else s
             parts.append(f'<a class="bub v-{s}" href="t/{t["token"]}.html" data-t="{t["token"]}"{fam} '
-                         f'data-state="{"checking" if s == "unverified" else s}"><title>{e(tip)}</title>'
-                         f'{orb(x, y, r)}{label}</a>')
+                         f'data-state="{st}"><title>{e(tip)}</title>{orb(x, y, r)}{label}</a>')
         out.append(f'<g class="body" data-x="{X:.1f}" data-y="{Y:.1f}" data-r="{R:.1f}" transform="translate({X:.1f} {Y:.1f})">'
                    f'{"".join(parts)}</g>')
-    # every launch in the last 48 hours is still being checked if nobody has claimed it, so "no claim" never shows here
-    legend = "".join(f'<button type="button" class="v-{k}" data-filter="{k}" aria-pressed="false"><i></i>{label}</button>'
-                     for k, label in (("verified", "Verified"), ("scam", "Impersonator"), ("checking", "Checking")))
     aura = f'<circle class="aura" cx="{w / 2:.1f}" cy="{h / 2:.1f}" r="{min(w, h) / 2:.1f}"/>'  # faded out before the edges
-    return (f'<figure class="lmapbox"><svg class="lmap" viewBox="0 0 {w:.0f} {h:.0f}" role="group" '
-            f'aria-label="Map of the last 48 hours of Orbio launches, by verdict">{orb_defs()}{aura}'
+    what = "the last 48 hours of Orbio launches" if mode == "new" else "the biggest Orbio agents by market cap"
+    return (f'<svg class="lmap" data-mode="{mode}" viewBox="0 0 {w:.0f} {h:.0f}" role="group" '
+            f'aria-label="Map of {what}, by verdict">{aura}'
             f'<g class="bodies">{"".join(out)}</g><g class="labels">{"".join(labels)}</g></svg>'
-            f'<figcaption class="maplegend">{legend}<span class="muted">Size: market cap above where every launch starts · paler: older, gone after 48 h · '
-            'a ring holds the tokens sharing a ticker · a pulse: launched in the last hour · <span class="on-hover">point '
-            'at a bubble for its numbers, click for its file, drag to fling it</span><span class="on-touch">tap a bubble '
-            f'for its numbers, tap again for its file</span></span></figcaption><script type="application/json" id="mapx">'
-            f'{inert(json.dumps(extra, separators=(",", ":"), ensure_ascii=False))}</script></figure>')
+            f'<script type="application/json" id="mapx-{mode}">'
+            f'{inert(json.dumps(extra, separators=(",", ":"), ensure_ascii=False))}</script>')
 
 
 def lineup(t: dict) -> str:
@@ -648,6 +696,7 @@ def home(feed: dict) -> str:
     scams = sorted((t for t in toks if t["verdict"]["verdict"] == "scam"), key=lambda t: -(t["launched_at"] or 0))
     board = sorted((t for t in toks if t["status"] in ("PROVEN", "LIVE", "BUILDING")), key=rank)
     recent = sorted((t for t in orbio if (t["launched_at"] or 0) >= now - 2 * DAY), key=lambda t: -(t["launched_at"] or 0))
+    base = start_mcap(toks)
     index = inert(json.dumps([{"t": t["token"], "s": t["symbol"], "n": t["name"], "a": t.get("orbio_agent"),
                                "k": state_of(t, now)} for t in toks], separators=(",", ":")))
     counts = {s: sum(1 for t in recent if state_of(t, now) == s) for s in STATE}
@@ -683,7 +732,7 @@ placeholder="Paste a contract address or type a ticker" autocomplete="off" spell
 <section id="live"><div class="sec-head"><div><h2>New on Orbio</h2>
 <p class="sub">Every agent launched in the last 48 hours, newest first. New launches and verdicts appear here as they land.</p></div>
 <div class="filters" role="group" aria-label="Show">{filters}</div></div>
-{launch_map(recent, now, start_mcap(toks))}
+{launch_map(recent, now, base, biggest(toks, base))}
 {feed_cards(recent, now)}
 <p class="more"><a href="agents.html">Every Orbio agent on file →</a></p></section>
 
@@ -731,13 +780,16 @@ def feed_cards(ts: list[dict], now: int, up: str = "") -> str:
 
 
 def board_table(board: list[dict], now: int, up: str = "") -> str:
-    rows = "".join(f"""<tr data-t="{t["token"]}"><td class="num">{i}</td><td>{tref(t, up)}</td><td>{status_chip(t["status"])}</td>
+    """The board in its own order (rank()), with # as that place: a click on a column re-sorts it (market cap, say), a
+    click on # puts it back."""
+    rows = "".join(f"""<tr data-t="{t["token"]}" data-rank="{i}" data-score="{(t["scores"] or {}).get("composite") or 0:.1f}"><td class="num">{i}</td><td>{tref(t, up)}</td><td>{status_chip(t["status"])}</td>
 <td class="score">{(t["scores"] or {}).get("composite") or 0:.0f}</td><td class="hide-sm">{bars(t["scores"])}</td>
 <td class="numcol hide-sm">{ph("mcap")}</td><td class="numcol hide-sm">{ph("vol")}</td><td class="hide-sm">{ph("curve")}</td>
 <td class="hide-sm"><span data-l="chip">{chip(state_of(t, now))}</span></td></tr>""" for i, t in enumerate(board, 1))
-    return f"""<div class="scroll"><table class="list"><thead><tr><th class="num">#</th><th>Token</th><th>Status</th>
-<th class="score">Score</th><th class="hide-sm">Product · Build · Team · Work · Integrity</th><th class="numcol hide-sm">Mkt cap</th>
-<th class="numcol hide-sm">24h vol</th><th class="hide-sm">Curve</th><th class="hide-sm">Official</th></tr></thead><tbody>{rows}</tbody></table></div>"""
+    head = (sort_th("rank", "#", "num", "ascending") + "<th>Token</th><th>Status</th>" + sort_th("score", "Score", "score")
+            + '<th class="hide-sm">Product · Build · Team · Work · Integrity</th>' + sort_th("mcap", "Mkt cap", "numcol hide-sm")
+            + sort_th("vol", "24h vol", "numcol hide-sm") + sort_th("curve", "Curve", "hide-sm") + '<th class="hide-sm">Official</th>')
+    return f"""<div class="scroll"><table class="list sortable"><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table></div>"""
 
 
 def scam_list(ts: list[dict], now: int, up: str = "", searchable: bool = False) -> str:
@@ -755,9 +807,11 @@ def scam_list(ts: list[dict], now: int, up: str = "", searchable: bool = False) 
     return f'<ul class="scams">{"".join(out)}</ul>'
 
 
-def sort_th(key: str, label: str, cls: str = "") -> str:
+def sort_th(key: str, label: str, cls: str = "", order: str = "") -> str:
+    """A column a click sorts by; `order` marks the one the rows already come sorted by."""
     c = f' class="{cls}"' if cls else ""
-    return f'<th{c} data-sort="{key}"><button type="button">{label}</button></th>'
+    o = f' aria-sort="{order}"' if order else ""
+    return f'<th{c} data-sort="{key}"{o}><button type="button">{label}</button></th>'
 
 
 def agents_page(feed: dict) -> str:
@@ -1500,6 +1554,13 @@ th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] bu
 .keynums dd small,.card-nums dd small{font-size:11px;color:var(--muted);font-weight:500}
 .official-ca{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}.official-ca code{word-break:break-all}
 .lmapbox{margin:4px 0 18px}.lmap{display:block;width:100%;max-width:700px;height:auto;margin:0 auto}
+.lmapdefs{position:absolute;width:0;height:0;overflow:hidden}
+.lmapbox[data-view=new] .lmap[data-mode=top],.lmapbox[data-view=top] .lmap[data-mode=new],
+.lmapbox[data-view=new] .for-top,.lmapbox[data-view=top] .for-new{display:none}
+.mapview{display:flex;gap:2px;width:max-content;max-width:100%;margin:0 auto 10px;padding:3px;border:1px solid var(--rule-2);border-radius:999px;background:var(--sheet)}
+.mapview button{font:600 12.5px var(--sans);color:var(--ink-2);background:none;border:0;border-radius:999px;padding:6px 14px;cursor:pointer;transition:background .15s,color .15s}
+.mapview button:hover{color:var(--ink)}.mapview button[aria-pressed=true]{background:var(--ink);color:var(--sheet)}
+.mapview button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 /* --age (1 fresh, paler with the hours) and --shrink (the last 12 of the 48 hours) come from the page script */
 .lmap{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .lmap .bub{opacity:var(--age,1);transform:scale(var(--shrink,1));transition:opacity .15s,transform .2s;transform-box:fill-box;transform-origin:center}
@@ -1777,7 +1838,7 @@ JS = r"""
     b.setAttribute('aria-pressed',on?'true':'false');b.textContent=b.classList.contains('watch')?(on?'★ Watching':'☆ Watch'):(on?'★':'☆')})}
   function applyFilter(){var list=document.getElementById('feed');if(!list)return;
     list.querySelectorAll('.card').forEach(function(c){c.hidden=filterKey!=='all'&&c.dataset.state!==filterKey});
-    if(MAP)MAP.querySelectorAll('.bub').forEach(function(b){b.classList.toggle('dim',filterKey!=='all'&&b.dataset.state!==filterKey)});
+    MAPS.forEach(function(m){m.querySelectorAll('.bub').forEach(function(b){b.classList.toggle('dim',filterKey!=='all'&&b.dataset.state!==filterKey)})});
     if(mcFor&&mcFor.classList.contains('dim'))hideCard()}
   function setFilter(k){filterKey=k;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',x.dataset.filter===k?'true':'false')});
     var lg=document.querySelector('.maplegend');if(lg)lg.classList.toggle('filtering',k!=='all');applyFilter()}
@@ -1802,13 +1863,21 @@ JS = r"""
     if(MAP)spawnNew();if(mcFor)renderCard();markNew();syncStars();applyFilter()}
   // ---- the launch map: a card for the bubble under the pointer (on a phone a tap pins it, a second tap opens the
   // file), a ticker's family lit up together, the legend as a filter, and a pulse on launches from the last hour
-  var MAP=document.querySelector('.lmap'),MX={t:{},f:[]},mc=null,mcFor=null,mcPinned=false,mcT=0,ptr='mouse';
-  if(MAP){try{MX=JSON.parse(document.getElementById('mapx').textContent)}catch(e){}
+  // two views (New, Biggest), each its own svg with its own data and bodies: MAP and the rest below are the one on show
+  var MAPS=[].slice.call(document.querySelectorAll('svg.lmap[data-mode]')),BOX=document.querySelector('.lmapbox'),
+    MAP=MAPS.filter(function(m){return BOX&&m.dataset.mode===BOX.dataset.view})[0]||MAPS[0]||null,
+    MX={t:{},f:[]},mc=null,mcFor=null,mcPinned=false,mcT=0,ptr='mouse';
+  MAPS.forEach(function(m){var x={t:{},f:[]};try{x=JSON.parse(document.getElementById('mapx-'+m.dataset.mode).textContent)}catch(e){}
+    var vb=m.viewBox.baseVal;m._st={MX:x,BODY:[],ONMAP:{},W:vb.width,H:vb.height};
     // the card replaces the browser's own tooltip; the text stays as the bubble's name for screen readers
-    MAP.querySelectorAll('.bub').forEach(function(b){var t=b.querySelector('title');if(t){b.setAttribute('aria-label',t.textContent);t.remove()}})}
-  function bubble(b,r){if(!r.s)return;for(var v in LABEL)b.classList.toggle('v-'+v,v===r.s);b.dataset.state=r.s==='unverified'?'checking':r.s;
+    m.querySelectorAll('.bub').forEach(function(b){var t=b.querySelector('title');if(t){b.setAttribute('aria-label',t.textContent);t.remove()}})});
+  function useMap(m){MAP=m;var s=m._st;MX=s.MX;BODY=s.BODY;ONMAP=s.ONMAP;W=s.W;H=s.H}
+  if(MAP)MX=MAP._st.MX;
+  function bubble(b,r){if(!r.s)return;for(var v in LABEL)b.classList.toggle('v-'+v,v===r.s);
+    var top=!!b.closest('.lmap[data-mode="top"]');b.dataset.state=r.s==='unverified'&&!top?'checking':r.s;
     var age=r.lt?now()-r.lt:0,fresh=age<3600;b.classList.toggle('fresh',fresh);
     if(fresh&&!b.querySelector('.halo')){var c=b.querySelector('.core'),h=c.cloneNode(false);h.setAttribute('class','halo');b.insertBefore(h,c)}
+    if(top)return;  // the Biggest view holds agents of any age: none of them fades
     // older is paler: full strength for the first hour, 45% at 36 hours, then it shrinks and fades out by 48 (the
     // server drops it from the map then; its card stays in the feed and its file on the agents page)
     var HR=3600,fade=age<HR?1:age<36*HR?1-.55*(age-HR)/(35*HR):Math.max(0,.45*(1-(age-36*HR)/(12*HR))),
@@ -1831,16 +1900,17 @@ JS = r"""
     return h+(mcPinned?'<div class="mc-act"><a class="btn primary" href="'+esc(href(k))+'" data-open="'+esc(k)+'">Open file →</a>'+
       '<button type="button" class="mini copy" data-copy="'+esc(k)+'">Copy CA</button><button type="button" class="mini star" data-star="'+esc(k)+
       '" aria-pressed="false" aria-label="Add to watchlist">☆</button></div>':'<p class="mc-hint">'+(kb?'Enter opens':'Click for')+' the full file</p>')}
-  function famCard(i){var f=MX.f[i];if(!f)return '';var c={verified:0,scam:0,checking:0};
-    f.m.forEach(function(k){var s=(LIVE&&LIVE.t[k]&&LIVE.t[k].s)||'checking';c[s==='unverified'?'checking':s]++});
-    var sum=[c.verified?c.verified+' verified':'',c.scam?c.scam+' impersonator'+(c.scam>1?'s':''):'',c.checking?c.checking+' checking':'']
-      .filter(Boolean).join(' · ');
+  function famCard(i){var f=MX.f[i];if(!f)return '';var c={verified:0,scam:0,checking:0,unverified:0};
+    // on New an unclaimed launch is still being checked; the Biggest view also has ones past their 72 hours
+    f.m.forEach(function(k){var s=(LIVE&&LIVE.t[k]&&LIVE.t[k].s)||'checking';c[s==='unverified'&&MX.k!=='top'?'checking':s]++});
+    var sum=[c.verified?c.verified+' verified':'',c.scam?c.scam+' impersonator'+(c.scam>1?'s':''):'',c.checking?c.checking+' checking':'',
+      c.unverified?c.unverified+' unverified':''].filter(Boolean).join(' · ');
     var rows=f.m.slice(0,8).map(function(k){var r=(LIVE&&LIVE.t[k])||{},x=MX.t[k]||{},s=r.s||'checking';
       var cells='<i></i><span class="o">'+(x.o?ord(x.o):'')+'</span><span class="ag">'+(r.a?'#'+r.a:'Pons')+'</span>'+
         '<span class="vs">'+LABEL[s]+'</span><span class="m">'+usd(r.m)+'</span>';
       return '<li class="v-'+s+'">'+(mcPinned?'<a href="'+esc(href(k))+'" data-open="'+esc(k)+'">'+cells+'</a>':'<span class="row">'+cells+'</span>')+'</li>'}).join('');
     return '<div class="mc-top"><span>Same ticker</span>'+closeBtn()+'</div><p class="mc-title"><b>$'+esc(f.s)+'</b><span class="nm">'+
-      f.m.length+' in the last 48 h'+(f.n>f.m.length?', '+f.n+' in all':'')+'</span></p><p class="mc-sum">'+sum+'</p><ol class="mc-fam">'+rows+'</ol>'+
+      f.m.length+(MX.k==='top'?' among the biggest':' in the last 48 h')+(f.n>f.m.length?', '+f.n+' in all':'')+'</span></p><p class="mc-sum">'+sum+'</p><ol class="mc-fam">'+rows+'</ol>'+
       (f.m.length>8?'<p class="mc-more">and '+(f.m.length-8)+' more in the ring</p>':'')+
       (mcPinned?'':'<p class="mc-hint">In launch order, ranked among every token with the ticker. Click to keep this open.</p>')}
   function light(f){MAP.classList.toggle('famfocus',f!=null);
@@ -1867,26 +1937,27 @@ JS = r"""
   function nearest(cx,cy,px){var best=null,bd=px;  // a phone shows the map at half size: a tap near a small bubble picks it
     MAP.querySelectorAll('.bub:not(.dim):not(.gone)').forEach(function(b){var r=b.querySelector('.core').getBoundingClientRect(),
       d=Math.hypot(cx-r.left-r.width/2,cy-r.top-r.height/2)-r.width/2;if(d<bd){bd=d;best=b}});return best}
-  if(MAP){
-    document.addEventListener('pointerdown',function(ev){ptr=ev.pointerType||'mouse'},true);
-    MAP.addEventListener('pointerover',function(ev){if(ev.pointerType!=='mouse'||mcPinned||held)return;var el=mapTarget(ev.target);if(!el)return;
+  if(MAP)document.addEventListener('pointerdown',function(ev){ptr=ev.pointerType||'mouse'},true);
+  MAPS.forEach(function(M){  // only the view on show gets events; the handlers act on MAP, which is that view
+    M.addEventListener('pointerover',function(ev){if(ev.pointerType!=='mouse'||mcPinned||held)return;var el=mapTarget(ev.target);if(!el)return;
       if(el.classList.contains('fam')){light(el.dataset.f);return}  // inside a ring: light the family; the card waits for a bubble or the label
       showCard(el,false)});
-    MAP.addEventListener('pointerout',function(ev){if(ev.pointerType!=='mouse'||mcPinned||held)return;var to=mapTarget(ev.relatedTarget);
+    M.addEventListener('pointerout',function(ev){if(ev.pointerType!=='mouse'||mcPinned||held)return;var to=mapTarget(ev.relatedTarget);
       if(!to||to.classList.contains('fam')){clearTimeout(mcT);mcT=setTimeout(function(){hideCard();if(to)light(to.dataset.f)},80)}});
-    MAP.addEventListener('click',function(ev){if(dragged){dragged=false;ev.preventDefault();return}
+    M.addEventListener('click',function(ev){if(dragged){dragged=false;ev.preventDefault();return}
       var el=mapTarget(ev.target),touch=ev.detail!==0&&ptr!=='mouse';
       if(touch&&(!el||el.classList.contains('fam')))el=nearest(ev.clientX,ev.clientY,22)||el;
       if(!el){if(mcPinned)hideCard();return}
       if(el.classList.contains('bub')){if(!touch||(mcPinned&&mcFor===el)){if(!modKey(ev)){ev.preventDefault();openFile(el)}return}
         ev.preventDefault();showCard(el,true);return}
       ev.preventDefault();showCard(el.classList.contains('fam')?MAP.querySelector('.famlabel[data-f="'+el.dataset.f+'"]')||el:el,true)});
-    MAP.addEventListener('focusin',function(ev){var el=mapTarget(ev.target),kb=false;try{kb=!!el&&el.matches(':focus-visible')}catch(e){}
+    M.addEventListener('focusin',function(ev){var el=mapTarget(ev.target),kb=false;try{kb=!!el&&el.matches(':focus-visible')}catch(e){}
       if(kb&&!mcPinned)showCard(el,false,true)});
-    MAP.addEventListener('focusout',function(ev){if(!mcPinned&&!(mc&&mc.contains(ev.relatedTarget)))hideCard()});
-    MAP.addEventListener('keydown',function(ev){var el=mapTarget(ev.target);
+    M.addEventListener('focusout',function(ev){if(!mcPinned&&!(mc&&mc.contains(ev.relatedTarget)))hideCard()});
+    M.addEventListener('keydown',function(ev){var el=mapTarget(ev.target);
       if(el&&el.classList.contains('famlabel')&&(ev.key==='Enter'||ev.key===' ')){ev.preventDefault();showCard(el,true);
-        var a=mc.querySelector('.mc-fam a');if(a)a.focus()}});
+        var a=mc.querySelector('.mc-fam a');if(a)a.focus()}})});
+  if(MAP){
     document.addEventListener('keydown',function(ev){if(ev.key!=='Escape'||!mcFor)return;var back=mcFor,inside=mc.contains(document.activeElement);
       hideCard();if(inside)back.focus()});
     window.addEventListener('resize',placeCard);window.addEventListener('hashchange',hideCard)}
@@ -1943,7 +2014,7 @@ JS = r"""
       for(var i=0;i<BODY.length&&ok;i++){var b=BODY[i],m=b.r*b.k+r+6+(b.lab?10:0),dx=x-b.x,dy=y-b.y;if(dx*dx+dy*dy<m*m)ok=false}
       if(ok){var d=(x-W/2)*(x-W/2)+(y-H/2)*(y-H/2);if(d<bd){bd=d;best={x:x,y:y}}}}
     return best}
-  function spawnNew(){if(!LIVE||!BODY.length)return;var t=now(),n=0;
+  function spawnNew(){if(!LIVE||!MAP||MAP.dataset.mode!=='new'||!BODY.length)return;var t=now(),n=0;  // New only, when on show
     Object.keys(LIVE.t).forEach(function(k){var r=LIVE.t[k];if(n>=6||ONMAP[k]||!r.a||!r.lt||t-r.lt>6*3600)return;
       var rr=Math.max(8,Math.min(44,7+4.2*Math.sqrt(Math.max(0,(r.m||0)-(MX.b||0))/1000))),p=freeSpot(rr);ONMAP[k]=1;if(!p)return;n++;
       var s=r.s||'checking',g=document.createElementNS(NS,'g');g.setAttribute('class','body');
@@ -1952,14 +2023,22 @@ JS = r"""
         Math.min(13,rr*.42).toFixed(1)+'px">'+esc((r.sym||'?').slice(0,7))+'</text>':'')+'</a>';
       MAP.querySelector('.bodies').appendChild(g);drawBody(addBody(g,p.x,p.y,rr));bubble(g.firstChild,r)});
     if(n){applyFilter();kick()}}
+  // the switch between the views: the one going away keeps its bodies where they are, frozen until it's back
+  function setView(v){var m=MAPS.filter(function(x){return x.dataset.mode===v})[0];if(!m||m===MAP)return;
+    hideCard();if(drag){drag=null;held=null;MAP.classList.remove('dragging')}
+    BOX.dataset.view=v;BOX.querySelectorAll('.mapview [data-view]').forEach(function(b){b.setAttribute('aria-pressed',b.dataset.view===v?'true':'false')});
+    if(filterKey==='unverified'&&v!=='top')setFilter('all');  // only the Biggest view has unclaimed agents past 72 h
+    useMap(m);lastT=0;spawnNew();kick()}
   if(MAP){
-    var vb=MAP.viewBox.baseVal;W=vb.width;H=vb.height;
-    MAP.querySelectorAll('.body').forEach(function(g){addBody(g,+g.dataset.x,+g.dataset.y,+g.dataset.r)});
-    MAP.addEventListener('pointerdown',function(ev){dragged=false;if(ev.pointerType==='touch'||ev.button!==0||scanning)return;
+    var shown=MAP;  // each view's bodies go into its own list (useMap points BODY at it), then back to the one on show
+    MAPS.forEach(function(m){useMap(m);m.querySelectorAll('.body').forEach(function(g){addBody(g,+g.dataset.x,+g.dataset.y,+g.dataset.r)})});
+    useMap(shown);
+    MAPS.forEach(function(M){
+    M.addEventListener('pointerdown',function(ev){dragged=false;if(ev.pointerType==='touch'||ev.button!==0||scanning)return;
       var b=bodyOf(mapTarget(ev.target));if(!b)return;var p=svgPt(ev);
       drag={b:b,id:ev.pointerId,sx:ev.clientX,sy:ev.clientY,ox:p.x-b.x,oy:p.y-b.y,on:false,px:b.x,py:b.y,pt:performance.now(),vx:0,vy:0};
       ev.preventDefault()});
-    MAP.addEventListener('dragstart',function(ev){ev.preventDefault()});
+    M.addEventListener('dragstart',function(ev){ev.preventDefault()})});
     window.addEventListener('pointermove',function(ev){if(!drag||ev.pointerId!==drag.id)return;
       if(!drag.on){if(Math.abs(ev.clientX-drag.sx)+Math.abs(ev.clientY-drag.sy)<6)return;
         drag.on=true;held=drag.b;hideCard();MAP.classList.add('dragging');try{MAP.setPointerCapture(ev.pointerId)}catch(e){}}
@@ -1970,7 +2049,8 @@ JS = r"""
       var flick=performance.now()-d.pt<90,v=Math.hypot(d.vx,d.vy),cap=v>14?14/v:1;  // held still before letting go: no flick
       d.b.vx=flick?d.vx*cap:0;d.b.vy=flick?d.vy*cap:0;kick()};
     window.addEventListener('pointerup',letGo);window.addEventListener('pointercancel',letGo);
-    if('IntersectionObserver' in window)new IntersectionObserver(function(es){onScreen=es[0].isIntersecting;kick()}).observe(MAP);
+    if('IntersectionObserver' in window){var io=new IntersectionObserver(function(es){
+      es.forEach(function(x){if(x.target===MAP)onScreen=x.isIntersecting});kick()});MAPS.forEach(function(m){io.observe(m)})}
     document.addEventListener('visibilitychange',function(){if(!document.hidden){lastT=0;kick()}});
     kick()}
   // ---- opening a file from the map: the sphere lifts off, grows in the middle of the screen, and a scanner reads out
@@ -2014,9 +2094,10 @@ JS = r"""
     if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done,fallback);else fallback()}
   function sortVal(row,key){var r=(LIVE&&LIVE.t[row.dataset.t])||{};switch(key){
     case 'mcap':return r.m||0;case 'vol':return r.v||0;case 'curve':return r.g?101:(r.c||0);case 'age':return +row.dataset.lt||0;
-    case 'verdict':return ORDER[r.s||row.dataset.state]||0;default:return row.dataset.sym||''}}
+    case 'verdict':return ORDER[r.s||row.dataset.state]||0;case 'rank':return +row.dataset.rank||0;
+    case 'score':return +row.dataset.score||0;default:return row.dataset.sym||''}}
   function sortBy(th){var tb=th.closest('table').tBodies[0],key=th.dataset.sort,cur=th.getAttribute('aria-sort');
-    var desc=cur?cur==='ascending':key!=='name';
+    var desc=cur?cur==='ascending':key!=='name'&&key!=='rank';  // biggest first, but a name or a place from the top
     th.closest('tr').querySelectorAll('th').forEach(function(x){x.removeAttribute('aria-sort')});
     th.setAttribute('aria-sort',desc?'descending':'ascending');
     var rows=[].slice.call(tb.rows);rows.sort(function(a,b){var x=sortVal(a,key),y=sortVal(b,key),c=typeof x==='string'?x.localeCompare(y):x-y;return desc?-c:c});
@@ -2033,6 +2114,7 @@ JS = r"""
     // the filter buttons, and the map's legend, which toggles: a second click on the same key shows everything again
     var fb=ev.target.closest('[data-filter]');if(fb){var k=fb.dataset.filter;setFilter(fb.closest('.maplegend')&&filterKey===k?'all':k);return}
     var sb=ev.target.closest('th[data-sort] button');if(sb){sortBy(sb.parentNode);return}
+    var vw=ev.target.closest('.mapview [data-view]');if(vw){setView(vw.dataset.view);return}
     if(res&&!res.contains(ev.target)&&ev.target!==q)res.hidden=true});
   document.querySelectorAll('.filter').forEach(function(f){f.addEventListener('input',function(){
     var v=f.value.trim().toLowerCase(),scope=f.closest('.view')||document;
