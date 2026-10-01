@@ -1448,16 +1448,48 @@ def case_page(c: dict, feed: dict) -> str:
 
 
 def cases_page(cases: list[dict], feed: dict) -> str:
-    items = []
-    for c in cases:
+    """The case files as an investigator's folder: a manila cover that opens on an index card, and each case a typed
+    document whose page turns over to its findings. The faces come in reading order (cover, index, then each case's
+    document and findings, then the end of the file); the page script binds them into turning leaves, two pages a
+    spread on a wide screen and one at a time on a phone. Without it, they simply stack."""
+    now, by, n = feed["generated_at"], {t["token"]: t for t in feed["tokens"]}, len(cases)
+    opened = min((c.get("date") or "" for c in cases), default="")
+    faces = [f"""<section class="cf-face cf-cover" aria-label="The case files folder"><span class="cf-tab">{NAME}</span>
+<p class="cf-stencil">Case<br>files</p>
+<dl class="cf-label"><div><dt>Subject</dt><dd>Orbio launchpad · Robinhood Chain</dd></div>
+<div><dt>Contents</dt><dd>{plural(n, "file")}</dd></div><div><dt>Opened</dt><dd>{case_date(opened)}</dd></div></dl>
+<span class="cf-stamp">Follow the money</span><button type="button" class="cf-open">Open the file</button></section>"""]
+    rows = "".join(f'<li><a href="#cf-doc-{i}" data-goto="{i}"><span class="no">{int(c.get("no") or 0):03d}</span>'
+                   f'<span class="t">{e(c.get("title"))}</span><span class="d">{case_date(c.get("date"))}</span></a></li>'
+                   for i, c in enumerate(cases, 1))
+    faces.append(f'<section class="cf-face cf-inside" aria-label="Index of files"><div class="cf-card"><p class="cf-k">Index of files</p>'
+                 f'<ol class="cf-index">{rows}</ol><p class="cf-hint">Turn the pages, or pick a file.</p></div></section>')
+    for i, c in enumerate(cases, 1):
+        no, href = case_no(c), f'case/{e(c["slug"])}.html'
+        stamp = '<span class="cf-mark draft">Draft</span>' if c.get("status") != "published" else '<span class="cf-mark">Filed</span>'
         tiles = "".join(f"<div><dd>{e(v)}</dd><dt>{e(k)}</dt></div>" for v, k in (c.get("tiles") or [])[:3])
-        tag = ' <span class="pv draft-tag">Draft</span>' if c.get("status") != "published" else ""
-        items.append(f'<li class="casecard"><a href="case/{e(c["slug"])}.html"><p class="eyebrow">{case_no(c)} · '
-                     f'{case_date(c.get("date"))}{tag}</p><h2>{e(c.get("title"))}</h2><p>{e(c.get("dek"))}</p>'
-                     f'<dl class="tally">{tiles}</dl></a></li>')
-    return f"""<section class="page-head"><p class="eyebrow">Money trail · preview</p><h1>Case files</h1>
-<p class="sub">The deep dives behind the verdicts. Each one follows the money on-chain, and every claim links its receipt.</p></section>
-<ol class="cases">{"".join(items)}</ol>"""
+        exhibit = ""
+        if (b := c.get("beads")) and b.get("rows"):
+            dots = "".join(f'<li class="v-{state_of(by[r["token"]], now) if r.get("token") in by else "checking"}" '
+                           f'title="${e(r.get("symbol") or "?")} #{e(r.get("vault_id"))}"></li>' for r in b["rows"])
+            exhibit = f'<div class="cf-exhibit"><p class="cf-k">Exhibit A · the launches, in order</p><ol class="cf-dots">{dots}</ol></div>'
+        faces.append(f"""<section class="cf-face cf-doc" id="cf-doc-{i}" aria-label="{e(no)}"><div class="cf-paper">
+<p class="cf-head"><span>{e(no)}</span><span>{case_date(c.get("date"))}</span></p>{stamp}
+<h2>{e(c.get("title"))}</h2><p class="cf-dek">{e(c.get("dek"))}</p><dl class="cf-tiles">{tiles}</dl>{exhibit}
+<a class="cf-go" href="{href}">Open the case file →</a><span class="cf-pg">{2 * i - 1}</span></div></section>""")
+        finds = "".join(f"<li>{e(f.get('h'))}</li>" for f in c.get("findings") or [])
+        faces.append(f"""<section class="cf-face cf-doc cf-findings" aria-label="{e(no)}: findings"><div class="cf-paper">
+<p class="cf-head"><span>{e(no)} · Findings</span><span>{case_date(c.get("date"))}</span></p>
+<ol class="cf-find">{finds}</ol><a class="cf-go" href="{href}">Every finding, with its receipts →</a>
+<span class="cf-pg">{2 * i}</span></div></section>""")
+    faces.append(f'<section class="cf-face cf-end" aria-label="End of file"><p class="cf-stencil small">End of file</p>'
+                 f'<p>New cases are added as {NAME} follows the money.</p><a href="method.html">How {NAME} checks a token →</a></section>')
+    return f"""<section class="page-head"><p class="eyebrow">Money trail · preview</p><h1>The investigator's files</h1>
+<p class="sub">The deep dives behind the verdicts. Open the folder: each document follows the money on-chain, and every claim
+in it links its receipt.</p></section>
+<div class="casefolder" data-n="{n}">{"".join(faces)}</div>
+<div class="cf-controls" hidden><button type="button" class="cf-prev" aria-label="Previous page">← Back</button>
+<span class="cf-count" aria-live="polite"></span><button type="button" class="cf-next" aria-label="Next page">Turn →</button></div>"""
 
 
 def method_page() -> str:
@@ -1743,6 +1775,85 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .casecard>a{display:block;padding:20px 22px;background:var(--sheet);border:1px solid var(--rule);border-radius:14px;color:inherit;text-decoration:none;transition:border-color .15s}
 .casecard>a:hover{border-color:var(--rule-2)}.casecard h2{font-size:clamp(21px,3vw,26px)}.casecard p{color:var(--ink-2);max-width:76ch}
 .casecard .tally{margin-top:16px}
+/* the case files: a manila folder of typed documents (cases_page); paper and card stay paper-coloured in either theme */
+.casefolder{--manila:#d8b676;--manila-2:#c9a35f;--manila-edge:#9c7a41;--paper:#f5f1e7;--paper-2:#ebe5d6;--ink:#272219;
+  --ink-2:#5b5448;--rule-p:#d6cfbf;--stamp:#b8352c;--pw:min(430px,calc((100vw - 72px)/2));--ph:calc(var(--pw)*1.34);
+  --turn:.85s cubic-bezier(.45,.05,.2,1);filter:brightness(.93) saturate(.95);font-family:var(--sans)}
+:root[data-theme="light"] .casefolder{filter:none}
+.casefolder:not(.ready){display:grid;gap:16px}
+.cf-face{color:var(--ink);box-sizing:border-box}
+.casefolder:not(.ready) .cf-face{border-radius:12px;overflow:hidden}.casefolder:not(.ready) .cf-open{display:none}
+.cf-cover,.cf-inside,.cf-end{background:linear-gradient(135deg,var(--manila),var(--manila-2));padding:28px 26px;position:relative;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.08),inset 0 -40px 60px rgba(120,85,30,.18)}
+.cf-cover{border-radius:4px 12px 12px 4px}
+.cf-tab{position:absolute;top:-24px;left:22px;height:26px;padding:0 18px;border-radius:8px 8px 0 0;background:var(--manila);
+  font:700 11px/26px var(--mono);letter-spacing:.18em;text-transform:uppercase;color:#5a4521;box-shadow:inset 0 1px 0 rgba(255,255,255,.35)}
+.casefolder:not(.ready) .cf-tab{position:static;display:inline-block;margin-bottom:8px;border-radius:8px}
+.cf-stencil{margin:26px 0 0;font:900 clamp(44px,9vw,68px)/.92 var(--display);letter-spacing:.04em;text-transform:uppercase;
+  color:rgba(70,48,14,.82);font-stretch:85%}
+.cf-stencil.small{font-size:34px;margin:0 0 12px}
+.cf-label{margin:26px 0 0;padding:12px 14px;background:var(--paper);border:1px solid var(--rule-p);border-radius:3px;max-width:290px;
+  box-shadow:0 1px 2px rgba(0,0,0,.18);transform:rotate(-1deg);display:grid;gap:6px}
+.cf-label div{display:grid;grid-template-columns:76px 1fr;gap:8px}.cf-label dt{font:700 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2)}
+.cf-label dd{margin:0;font:600 13px var(--mono);color:var(--ink)}
+.cf-stamp,.cf-mark{display:inline-block;font:800 13px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--stamp);
+  border:2.5px solid var(--stamp);border-radius:5px;padding:5px 10px;opacity:.82;mix-blend-mode:multiply}
+.cf-stamp{position:absolute;right:26px;bottom:92px;transform:rotate(-9deg)}
+.cf-open{position:absolute;left:26px;bottom:26px;font:700 13px var(--mono);letter-spacing:.08em;text-transform:uppercase;cursor:pointer;
+  color:#3b2c12;background:rgba(255,255,255,.35);border:1px solid rgba(60,40,10,.35);border-radius:999px;padding:10px 16px}
+.cf-open:hover{background:rgba(255,255,255,.55)}
+.cf-card{background:var(--paper);border:1px solid var(--rule-p);border-radius:4px;padding:20px 18px;box-shadow:0 2px 6px rgba(0,0,0,.18);
+  transform:rotate(.6deg)}
+.cf-k{margin:0 0 10px;font:700 11px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2)}
+.cf-index{list-style:none;margin:0;padding:0}.cf-index li+li{border-top:1px dashed var(--rule-p)}
+.cf-index a{display:grid;grid-template-columns:40px 1fr;gap:2px 10px;padding:10px 2px;color:var(--ink);text-decoration:none}
+.cf-index a:hover .t{text-decoration:underline}.cf-index .no{font:700 13px var(--mono);color:var(--stamp);grid-row:span 2}
+.cf-index .t{font-weight:700;font-size:15px}.cf-index .d{font:12px var(--mono);color:var(--ink-2)}
+.cf-hint{margin:14px 0 0;font:12px var(--mono);color:var(--ink-2)}
+.cf-doc{background:var(--paper);background-image:repeating-linear-gradient(transparent 0 27px,rgba(90,80,60,.07) 27px 28px);
+  border-radius:2px 6px 6px 2px;box-shadow:inset 18px 0 22px -18px rgba(0,0,0,.28)}
+.cf-paper{position:relative;height:100%;padding:24px 26px 22px;display:flex;flex-direction:column;gap:10px;box-sizing:border-box;overflow:hidden}
+.cf-head{display:flex;justify-content:space-between;margin:0;padding-bottom:8px;border-bottom:2px solid var(--ink);
+  font:700 11.5px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink)}
+.cf-mark{align-self:flex-end;margin:-2px 0 -6px;transform:rotate(-6deg);font-size:11px;padding:3px 8px;border-width:2px}
+.cf-mark.draft{color:#9a5b00;border-color:#9a5b00}
+.cf-doc h2{margin:2px 0 0;font:800 clamp(22px,2.6vw,28px)/1.08 var(--display);color:var(--ink)}
+.cf-dek{margin:0;font-size:14px;line-height:1.5;color:var(--ink-2)}
+.cf-tiles{display:flex;gap:18px;margin:4px 0 0}.cf-tiles div{display:flex;flex-direction:column-reverse}
+.cf-tiles dd{margin:0;font:700 24px/1.1 var(--mono);color:var(--ink)}.cf-tiles dt{font-size:11.5px;color:var(--ink-2)}
+.cf-exhibit{margin-top:4px;padding:10px 12px;border:1px dashed var(--rule-p);border-radius:4px;background:rgba(255,255,255,.4)}
+.cf-exhibit .cf-k{margin-bottom:8px;font-size:10px}
+.cf-dots{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px}
+.cf-dots li{width:10px;height:10px;border-radius:50%;background:var(--st);box-shadow:inset 0 0 0 1px rgba(0,0,0,.15)}
+.cf-go{margin-top:auto;align-self:flex-start;font:700 13px var(--mono);color:#1f4fb3;text-decoration:none;border-bottom:1.5px solid currentColor}
+.cf-pg{position:absolute;right:26px;bottom:20px;font:12px var(--mono);color:var(--ink-2)}
+.cf-find{margin:6px 0 0;padding-left:20px;display:grid;gap:12px;font-size:15px;line-height:1.4;font-weight:600;color:var(--ink)}
+.cf-find li::marker{font:700 13px var(--mono);color:var(--stamp)}
+.cf-end{display:flex;flex-direction:column;justify-content:center;gap:6px;color:#3b2c12}.cf-end p{margin:0}.cf-end a{color:#3b2c12;font-weight:700}
+/* bound into a book by the page script: leaves turn about the spine (book) or about the left edge (single) */
+.casefolder.ready{position:relative;width:calc(var(--pw)*2);height:var(--ph);margin:44px auto 0;perspective:2600px;transition:transform var(--turn)}
+.casefolder.ready.closed{transform:translateX(calc(var(--pw)*-.5))}
+.cf-back{position:absolute;left:50%;top:0;width:var(--pw);height:var(--ph);border-radius:4px 12px 12px 4px;
+  background:linear-gradient(135deg,var(--manila-2),var(--manila));box-shadow:0 18px 40px rgba(0,0,0,.45),inset 0 0 0 1px rgba(0,0,0,.1)}
+.cf-back>.cf-end{position:absolute;inset:0;background:none;box-shadow:none;padding:36px}
+.cf-leaf{position:absolute;left:50%;top:0;width:var(--pw);height:var(--ph);transform-origin:left center;transform-style:preserve-3d;
+  transition:transform var(--turn)}
+.cf-leaf.paper{top:10px;height:calc(var(--ph) - 20px);width:calc(var(--pw) - 14px)}
+.cf-leaf.turned{transform:rotateY(-180deg)}
+.cf-leaf>.cf-face{position:absolute;inset:0;margin:0;overflow:hidden;backface-visibility:hidden;-webkit-backface-visibility:hidden}
+.cf-leaf>.cf-face.back{transform:rotateY(180deg)}
+.cf-leaf>.cf-face.cf-inside{border-radius:12px 4px 4px 12px}
+.cf-leaf>.cf-doc.back{border-radius:6px 2px 2px 6px;box-shadow:inset -18px 0 22px -18px rgba(0,0,0,.28)}
+.cf-leaf.moving>.cf-face{box-shadow:0 10px 40px rgba(0,0,0,.35)}
+.cf-leaf>.cf-cover{cursor:pointer;overflow:visible}  /* the tab stands above the cover's edge */
+.casefolder.ready .cf-tab{z-index:1}
+.casefolder.single{width:var(--pw)}.casefolder.single .cf-back,.casefolder.single .cf-leaf{left:0}
+.cf-controls{display:flex;align-items:center;justify-content:center;gap:14px;margin:22px 0 0}
+.cf-controls button{font:700 13px var(--mono);letter-spacing:.06em;padding:9px 16px;border-radius:999px;border:1px solid var(--rule-2);
+  background:var(--sheet);color:var(--ink);cursor:pointer}.cf-controls button:disabled{opacity:.35;cursor:default}
+.cf-count{font:600 12.5px var(--mono);color:var(--muted);min-width:150px;text-align:center}
+@media (max-width:760px){.casefolder{--pw:min(430px,calc(100vw - 32px))}.cf-tiles{gap:12px}.cf-tiles dd{font-size:19px}.cf-tiles dt{font-size:11px}}
+@media (prefers-reduced-motion:reduce){.casefolder{--turn:0s}}
 .crumb{margin:0 0 6px;font-weight:600}
 .file{position:relative;background:var(--sheet);border:1px solid var(--rule);border-radius:0 14px 14px 14px;padding:22px 22px 20px;margin-top:18px}
 .file-tab{position:absolute;left:-1px;top:-31px;height:32px;padding:8px 16px 0;background:var(--sheet);border:1px solid var(--rule);border-bottom:0;border-radius:10px 10px 0 0;font:600 11.5px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted);white-space:nowrap;max-width:calc(100% + 2px);overflow:hidden;text-overflow:ellipsis}
@@ -2335,6 +2446,49 @@ JS = r"""
     scanning.go=go;scanning.t=setTimeout(go,T0+rows.length*STEP+450);el.addEventListener('click',go)}
   function unscan(){if(!scanning)return;clearTimeout(scanning.t);scanning.el.remove();scanning.b.classList.remove('lifted');scanning=null}
   document.addEventListener('keydown',function(ev){if(scanning&&!/^(Shift|Control|Alt|Meta)$/.test(ev.key)){ev.preventDefault();scanning.go()}},true);
+  // ---- the case files: a folder that opens on its index, each case a document that turns over to its findings. The
+  // faces arrive in reading order; on a wide screen two make a leaf (front on the right, back on the left once turned),
+  // on a phone each face is a sheet of its own. The end of the file sits under every leaf, on the folder's back
+  (function(){var CF=document.querySelector('.casefolder'),ctl=document.querySelector('.cf-controls');if(!CF||!ctl)return;
+    var faces=[].slice.call(CF.children).filter(function(f){return f.classList.contains('cf-face')}),end=faces.pop(),
+      prev=ctl.querySelector('.cf-prev'),next=ctl.querySelector('.cf-next'),count=ctl.querySelector('.cf-count'),
+      n=+CF.dataset.n||0,mode='',leaves=[],pos=0,busy=0,TURN=matchMedia('(prefers-reduced-motion: reduce)').matches?0:850;
+    var back=document.createElement('div');back.className='cf-back';back.appendChild(end);CF.appendChild(back);
+    function z(i){return leaves[i].classList.contains('turned')?i+1:2*leaves.length-i}
+    function build(){var single=matchMedia('(max-width: 760px)').matches,m=single?'single':'book';if(m===mode)return;
+      // keep the reader on the same page across a rotation: a book leaf holds two faces, a sheet one
+      if(mode)pos=single?Math.min(pos*2,faces.length):Math.ceil(pos/2);mode=m;
+      leaves.forEach(function(l){l.remove()});leaves=[];
+      var groups=[];for(var i=0;i<faces.length;i+=single?1:2)groups.push(faces.slice(i,i+(single?1:2)));
+      groups.forEach(function(g,i){var l=document.createElement('div');l.className='cf-leaf'+(g[0].classList.contains('cf-doc')?' paper':'');
+        g.forEach(function(f,k){f.classList.toggle('back',k===1);l.appendChild(f)});CF.appendChild(l);leaves.push(l)});
+      CF.classList.add('ready');CF.classList.toggle('single',single);
+      leaves.forEach(function(l,i){l.classList.toggle('turned',i<pos);l.style.zIndex=z(i)});show()}
+    function show(){CF.classList.toggle('closed',mode==='book'&&pos===0);
+      // only what's in view takes focus and clicks
+      var seen=mode==='book'?[pos>0&&leaves[pos-1].lastChild,leaves[pos]&&leaves[pos].firstChild]:[leaves[pos]&&leaves[pos].firstChild];
+      faces.forEach(function(f){f.inert=seen.indexOf(f)<0});end.inert=pos<leaves.length;
+      prev.disabled=pos===0;next.disabled=pos>=leaves.length;ctl.hidden=false;
+      var doc=mode==='book'?pos:Math.floor(pos/2);
+      count.textContent=pos===0?'Closed':pos>=leaves.length?'End of file':(mode==='single'&&pos===1)?'Index':
+        'File '+Math.min(doc,n)+' of '+n+(mode==='single'&&pos%2?' · findings':'')}
+    function turn(i,fwd){var l=leaves[i];if(!l)return;l.style.zIndex=3*leaves.length;l.classList.add('moving');
+      l.classList.toggle('turned',fwd);setTimeout(function(){l.classList.remove('moving');l.style.zIndex=z(i)},TURN+30)}
+    function go(to){to=Math.max(0,Math.min(leaves.length,to));if(to===pos||busy)return;busy=1;
+      var fwd=to>pos,steps=Math.abs(to-pos),k=0;
+      (function stepOnce(){turn(fwd?pos:pos-1,fwd);pos+=fwd?1:-1;show();
+        if(++k<steps)setTimeout(stepOnce,TURN?150:0);else setTimeout(function(){busy=0},TURN?TURN*.6:0)})()}
+    next.addEventListener('click',function(){go(pos+1)});prev.addEventListener('click',function(){go(pos-1)});
+    CF.addEventListener('click',function(ev){var g=ev.target.closest('[data-goto]');
+      if(g){ev.preventDefault();var k=+g.dataset.goto;go(mode==='book'?k:2*k);return}
+      if(pos===0&&ev.target.closest('.cf-cover'))go(1)});
+    document.addEventListener('keydown',function(ev){if(ev.target.closest&&ev.target.closest('input,textarea'))return;
+      var r=CF.getBoundingClientRect();if(r.bottom<0||r.top>innerHeight)return;
+      if(ev.key==='ArrowRight'){ev.preventDefault();go(pos+1)}else if(ev.key==='ArrowLeft'){ev.preventDefault();go(pos-1)}});
+    var sx=null;CF.addEventListener('pointerdown',function(ev){sx=ev.target.closest('a,button')?null:ev.clientX});
+    CF.addEventListener('pointerup',function(ev){if(sx==null)return;var dx=ev.clientX-sx;sx=null;
+      if(Math.abs(dx)>40)go(pos+(dx<0?1:-1))});
+    build();addEventListener('resize',build)})();
   function load(){if(!D.live||!window.fetch)return spare();fetch(D.live+(D.live.indexOf('?')<0?'?':'&')+'_='+Date.now(),{cache:'no-store'})
     .then(function(r){return r.ok?r.json():null}).then(function(j){if(j&&j.t){LIVE=j;SPARE=null;apply()}else spare()}).catch(spare)}
   function spare(){if(!LIVE&&SPARE){LIVE=SPARE;SPARE=null;apply()}}  // no fresh numbers to be had: old ones beat none
