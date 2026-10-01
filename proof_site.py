@@ -993,18 +993,20 @@ def scam_facts(t: dict, kind: str, up: str = "") -> list[tuple[str, str]]:
     return sorted(out, key=lambda f: order[f[0]])
 
 
-def scam_list(ts: list[dict], now: int, up: str = "", searchable: bool = False) -> str:
+def scam_list(ts: list[dict], now: int, up: str = "", searchable: bool = False, per: int = 5) -> str:
+    """Newest first, `per` a page (the page's script adds the pager and pages what a filter leaves)."""
     if not ts:
         return '<p class="muted">None caught yet.</p>'
     out = []
-    for t in ts:
+    for i, t in enumerate(ts, 1):
         kind, ev = scam_reason(t, up)
         facts = "".join(f'<li class="{c}"><i></i><span>{h}</span></li>' for c, h in scam_facts(t, kind, up))
         attr = f' data-search="{e(search_key(t))}"' if searchable else ""
-        out.append(f"""<li class="imp"{attr}><div class="imp-id">{tref(t, up)}<div class="imp-meta">
+        out.append(f"""<li class="imp{" pg-off" if i > per else ""}"{attr}><div class="imp-id">{tref(t, up)}<div class="imp-meta">
 <span class="rbadge" title="{e(STATE_TEXT[state_of(t, now)])}">{icon("stop")}{REASON[kind]}</span><span class="age">{when(t["launched_at"])}</span></div></div>
 <div class="imp-body"><div class="imp-ev">{ev}</div>{f'<ul class="imp-facts">{facts}</ul>' if facts else ""}</div></li>""")
-    return f'<ul class="imps">{"".join(out)}</ul>'
+    return (f'<ul class="imps" data-per="{per}" data-label="Pages of impersonators" data-prev="← Newer" data-next="Older →">'
+            f'{"".join(out)}</ul>')
 
 
 def sort_th(key: str, label: str, cls: str = "", order: str = "", tip: str = "") -> str:
@@ -1843,7 +1845,7 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .filters button span{font:500 12px var(--mono);color:var(--muted)}
 .filters button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:var(--sheet)}.filters button[aria-pressed=true] span{color:inherit;opacity:.7}
 .feed{list-style:none;margin:0;padding:0;display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(min(100%,330px),1fr))}
-.feed>.card.pg-off,tr.pg-off{display:none}
+.feed>.card.pg-off,tr.pg-off,.imps>.pg-off{display:none}
 .pager{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;margin:18px 0 0}
 .pager button{font:600 13px var(--mono);min-width:38px;padding:8px 12px;border-radius:999px;border:1px solid var(--rule-2);background:var(--sheet);
   color:var(--ink-2);cursor:pointer}.pager button:hover:not(:disabled){color:var(--ink);border-color:var(--ink-2)}
@@ -2450,15 +2452,16 @@ JS = r"""
       nums.map(function(p){return p==='…'?'<span class="gap">…</span>':'<button type="button" '+attr+'="'+p+'"'+(p===cur?' aria-current="page"':'')+'>'+p+'</button>'}).join('')+
       '<button type="button" '+attr+'="'+(cur+1)+'"'+(cur===pages?' disabled':'')+'>'+next+'</button>'+
       '<span class="pg-count">'+((cur-1)*per+1)+'–'+Math.min(n,cur*per)+' of '+n+'</span>'}
-  // a long table in pages (the board: 10 rows a page, the rest already hidden by the build); a sort starts again at page 1
-  function pageTable(tbl){var per=+tbl.dataset.per,rows=[].slice.call(tbl.tBodies[0].rows),pages=Math.max(1,Math.ceil(rows.length/per)),
-      cur=Math.min(Math.max(1,+tbl.dataset.pg||1),pages);tbl.dataset.pg=cur;
-    rows.forEach(function(r,i){r.classList.toggle('pg-off',Math.floor(i/per)+1!==cur)});
-    var box=tbl.closest('.scroll')||tbl,nav=box.nextElementSibling;
+  // a long table or list in pages (the board: 10 rows a page; impersonators: 5), the rest already hidden by the build.
+  // Pages count what a filter leaves; a sort or a new filter starts again at page 1
+  function pageList(el){var per=+el.dataset.per,items=[].slice.call(el.tBodies?el.tBodies[0].rows:el.children).filter(function(x){return !x.hidden}),
+      pages=Math.max(1,Math.ceil(items.length/per)),cur=Math.min(Math.max(1,+el.dataset.pg||1),pages);el.dataset.pg=cur;
+    items.forEach(function(r,i){r.classList.toggle('pg-off',Math.floor(i/per)+1!==cur)});
+    var box=el.closest('.scroll')||el,nav=box.nextElementSibling;
     if(!nav||!nav.classList.contains('tpager')){nav=document.createElement('nav');nav.className='pager tpager';
-      nav.setAttribute('aria-label',tbl.dataset.label||'Pages');box.parentNode.insertBefore(nav,box.nextSibling)}
-    nav.hidden=pages<2;nav.innerHTML=pages<2?'':pagerHtml(cur,pages,rows.length,per,'data-tpage','← Prev','Next →')}
-  document.querySelectorAll('table[data-per]').forEach(pageTable);
+      nav.setAttribute('aria-label',el.dataset.label||'Pages');box.parentNode.insertBefore(nav,box.nextSibling)}
+    nav.hidden=pages<2;nav.innerHTML=pages<2?'':pagerHtml(cur,pages,items.length,per,'data-tpage',el.dataset.prev||'← Prev',el.dataset.next||'Next →')}
+  document.querySelectorAll('[data-per]').forEach(pageList);
   function setFilter(k){filterKey=k;feedPage=1;document.querySelectorAll('[data-filter]').forEach(function(x){x.setAttribute('aria-pressed',x.dataset.filter===k?'true':'false')});
     var lg=document.querySelector('.maplegend');if(lg)lg.classList.toggle('filtering',k!=='all');applyFilter()}
   function markNew(){if(!seen)return;document.querySelectorAll('.card[data-t]').forEach(function(c){
@@ -2763,7 +2766,7 @@ JS = r"""
     th.closest('tr').querySelectorAll('th').forEach(function(x){x.removeAttribute('aria-sort')});
     th.setAttribute('aria-sort',desc?'descending':'ascending');
     var rows=[].slice.call(tb.rows);rows.sort(function(a,b){var x=sortVal(a,key),y=sortVal(b,key),c=typeof x==='string'?x.localeCompare(y):x-y;return desc?-c:c});
-    rows.forEach(function(r){tb.appendChild(r)});var tbl=th.closest('table');if(tbl.dataset.per){tbl.dataset.pg=1;pageTable(tbl)}}
+    rows.forEach(function(r){tb.appendChild(r)});var tbl=th.closest('table');if(tbl.dataset.per){tbl.dataset.pg=1;pageList(tbl)}}
   var q=document.getElementById('q'),res=document.getElementById('results'),idx=document.getElementById('idx');
   var all=idx?JSON.parse(idx.textContent):[];
   document.addEventListener('click',function(ev){
@@ -2778,14 +2781,15 @@ JS = r"""
     var sb=ev.target.closest('th[data-sort] button');if(sb){sortBy(sb.parentNode);return}
     var pg=ev.target.closest('#pager [data-page]');if(pg){feedPage=+pg.dataset.page;paginate();
       var fl=document.getElementById('feed');if(fl)scrollTo({top:fl.getBoundingClientRect().top+scrollY-90,behavior:CALM?'auto':'smooth'});return}
-    var tp=ev.target.closest('.tpager [data-tpage]');if(tp){var box=tp.parentNode.previousElementSibling,tbl=box.querySelector('table[data-per]')||box;
-      tbl.dataset.pg=tp.dataset.tpage;pageTable(tbl);var top=box.getBoundingClientRect().top;
+    var tp=ev.target.closest('.tpager [data-tpage]');if(tp){var box=tp.parentNode.previousElementSibling,el=box.dataset.per?box:box.querySelector('[data-per]');
+      el.dataset.pg=tp.dataset.tpage;pageList(el);var top=box.getBoundingClientRect().top;
       if(top<0)scrollTo({top:top+scrollY-90,behavior:CALM?'auto':'smooth'});return}
     var vw=ev.target.closest('.mapview [data-view]');if(vw){setView(vw.dataset.view);return}
     if(res&&!res.contains(ev.target)&&ev.target!==q)res.hidden=true});
   document.querySelectorAll('.filter').forEach(function(f){f.addEventListener('input',function(){
     var v=f.value.trim().toLowerCase(),scope=f.closest('.view')||document;
-    scope.querySelectorAll('[data-search]').forEach(function(r){r.hidden=!!v&&r.dataset.search.indexOf(v)<0})})});
+    scope.querySelectorAll('[data-search]').forEach(function(r){r.hidden=!!v&&r.dataset.search.indexOf(v)<0});
+    scope.querySelectorAll('[data-per]').forEach(function(x){x.dataset.pg=1;pageList(x)})})});
   document.addEventListener('paste',function(ev){var t=ev.target;
     if(t&&((t.tagName==='INPUT'&&t!==q)||t.tagName==='TEXTAREA'||t.isContentEditable))return;
     var txt=(ev.clipboardData||window.clipboardData||{getData:function(){return ''}}).getData('text')||'',m=txt.match(/0x[0-9a-fA-F]{40}/);
