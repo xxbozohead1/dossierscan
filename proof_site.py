@@ -252,7 +252,10 @@ THEME_SWITCH = ('<button type="button" class="theme" role="switch" aria-checked=
 
 
 def header(up: str = "") -> str:
-    nav = "".join(f'<a href="{up}{href}">{label}</a>' for href, label in NAV)
+    items = list(NAV)
+    if CASES:  # the case files, next to the impersonators, once there is one to show
+        items.insert(3, ("cases.html", "Cases"))
+    nav = "".join(f'<a href="{up}{href}">{label}</a>' for href, label in items)
     return (f'<header class="top"><div class="wrap"><a class="brand" href="{up}index.html">{MARK}{NAME}</a>'
             f'<nav aria-label="Sections">{nav}</nav>{THEME_SWITCH}</div></header>')
 
@@ -407,6 +410,7 @@ def signature(feed: dict) -> str:
     now = feed["generated_at"]
     static = [{**{k: v for k, v in t.items() if k not in LIVE_KEYS}, "_state": state_of(t, now)} for t in feed["tokens"]]
     blob = json.dumps({"speed": feed.get("speed"), "method": feed.get("method"), "bot": bot_username(), "site": site_url(),
+                       "cases": load_cases(),
                        "assets": [asset_version(), file_version(OG_IMAGE), file_version(LOGO)], "tokens": static}, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
@@ -1251,6 +1255,182 @@ def md(text: str) -> str:
     return "\n".join(out)
 
 
+# ----------------------------------------------------------------- case files
+#
+# A case file is a deep dive: one investigation, written from chain data that was re-read from a public node, every
+# claim with its receipt. Each is one JSON file in cases/ (kept out of the public repo: only its page is published).
+# A draft is built only on the dev server, so nothing reaches the live site until its status says "published".
+
+CASES_DIR = ROOT / "cases"
+CASES: list[dict] = []  # the case files this build shows, newest first (set by build())
+
+
+def load_cases(drafts: bool | None = None) -> list[dict]:
+    """cases/*.json, newest first: the published ones, and drafts too when DOSSIER_DRAFTS=1 (tools/dev_site.sh)."""
+    if drafts is None:
+        drafts = os.environ.get("DOSSIER_DRAFTS") == "1"
+    out = []
+    for f in sorted(CASES_DIR.glob("*.json")):
+        try:
+            c = json.loads(f.read_text("utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(c, dict) or not re.fullmatch(r"[a-z0-9-]{3,80}", str(c.get("slug", ""))):
+            continue  # the slug names a file: nothing else may get through
+        if c.get("status") == "published" or (drafts and c.get("status") == "draft"):
+            out.append(c)
+    return sorted(out, key=lambda c: -int(c.get("no") or 0))
+
+
+def utc(ts: int | None, secs: bool = False) -> str:
+    if not ts:
+        return "—"
+    d = dt.datetime.fromtimestamp(ts, dt.timezone.utc)
+    return f"{d.day} {d:%b %H:%M}" + (f":{d:%S}" if secs else "") + " UTC"
+
+
+def case_date(s: str) -> str:
+    try:
+        d = dt.date.fromisoformat(s)
+    except (TypeError, ValueError):
+        return e(s)
+    return f"{d.day} {d:%b %Y}"
+
+
+def case_link(label: str, url: str, up: str) -> str:
+    """A receipt (any explorer or X link) or a page of this site (a relative path)."""
+    if re.match(r"https?://", url or ""):
+        return link(url, f"{label} ↗", "rcpt")
+    if re.fullmatch(r"(t|case)/[\w.-]+\.html", url or ""):
+        return f'<a class="rcpt" href="{up}{e(url)}">{e(label)} →</a>'
+    return e(label)
+
+
+def case_tok(r: dict, by: dict, now: int, up: str) -> tuple[str, str]:
+    """A launch named on a case page: its ticker and agent number, linked to its file (or the explorer), and its verdict
+    now, which the page keeps current."""
+    t = by.get(r.get("token"))
+    s = state_of(t, now) if t else "checking"
+    inner = f'<b>${e(r.get("symbol") or "?")}</b>' + (f' <span class="no">#{e(r["vault_id"])}</span>' if r.get("vault_id") else "")
+    if t:
+        return f'<a class="tok" href="{up}t/{e(r["token"])}.html">{inner}</a>', s
+    return f'<a class="tok" href="{EXPLORER}/token/{e(r.get("token"))}" rel="nofollow noopener" target="_blank">{inner}</a>', s
+
+
+def beads(rows: list[dict], by: dict, now: int, up: str) -> str:
+    """Launches in order as beads on a string, coloured by verdict: one look says how many and how many are fake."""
+    out = []
+    for r in rows:
+        t = by.get(r.get("token"))
+        s = state_of(t, now) if t else "checking"
+        href = f'{up}t/{e(r["token"])}.html' if t else f'{EXPLORER}/token/{e(r.get("token"))}'
+        tip = f'${r.get("symbol") or "?"} #{r.get("vault_id")} · {STATE[s]} · launched {utc(r.get("ts"))}'
+        out.append(f'<li class="v-{s}"><a href="{href}" title="{e(tip)}"><i></i><b>${e(r.get("symbol") or "?")}</b>'
+                   f'<span>#{e(r.get("vault_id"))}</span></a></li>')
+    counts = {s: sum(1 for r in rows if (state_of(by[r["token"]], now) if r.get("token") in by else "checking") == s) for s in STATE}
+    legend = "".join(f'<span class="v-{s}"><i></i>{STATE[s]} · {n}</span>' for s, n in counts.items() if n)
+    return f'<ol class="beads">{"".join(out)}</ol><p class="beadkey">{legend}</p>'
+
+
+def case_tokens(rows: list[dict], by: dict, now: int, up: str) -> str:
+    trs = []
+    for i, r in enumerate(rows, 1):
+        tok, s = case_tok(r, by, now, up)
+        h = r.get("names") or ""
+        names = (f'<a href="https://x.com/{e(h[1:])}" rel="nofollow noopener" target="_blank">{e(h)}</a>'
+                 if re.fullmatch(r"@\w{1,15}", h) else "—")
+        tx = " " + link(f"{EXPLORER}/tx/{r['tx']}", "Launch ↗", "rcpt") if r.get("tx") else ""
+        trs.append(f'<tr data-t="{e(r.get("token"))}"><td class="num">{i}</td><td>{tok}</td>'
+                   f'<td class="hide-sm muted">{utc(r.get("ts"))}{tx}</td><td>{names}</td>'
+                   f'<td><span data-l="chip">{chip(s)}</span></td></tr>')
+    return ('<div class="scroll"><table class="list"><thead><tr><th class="num">#</th><th>Token</th><th class="hide-sm">Launched</th>'
+            f'<th>Links to</th><th>Verdict now</th></tr></thead><tbody>{"".join(trs)}</tbody></table></div>')
+
+
+def trail(steps: list[dict], by: dict, now: int, up: str, compact: bool = False) -> str:
+    """The money trail: wallets, and the transfers between them, top to bottom, every step with its receipt."""
+    out = []
+    for st in steps:
+        if st.get("type") == "edge":
+            moves = "".join(f'<li><b>{e(m.get("amount"))}</b><span class="muted">{utc(m.get("ts"), secs=True)}</span>'
+                            + (link(f'{EXPLORER}/tx/{m["tx"]}', "Receipt ↗", "rcpt") if m.get("tx") else "") + "</li>"
+                            for m in st.get("moves") or [])
+            note = f'<p class="tr-note">{e(st["note"])}</p>' if st.get("note") else ""
+            out.append(f'<li class="tr-edge"><ul class="tr-moves">{moves}</ul>{note}</li>')
+            continue
+        a, launches, state = st.get("addr") or "", [], ""
+        for lch in st.get("launches") or []:
+            if lch.get("vault_id"):
+                tok, s = case_tok(lch, by, now, up)
+                state = state or s
+                what = f"Launched {tok} {chip(s)}"
+            else:
+                what = "Launched " + link(f'{EXPLORER}/token/{lch.get("token")}', "a token straight on Pons")
+            rc = " " + link(f'{EXPLORER}/tx/{lch["tx"]}', "Receipt ↗", "rcpt") if lch.get("tx") else ""
+            launches.append(f'<p class="tr-launch">{what} <span class="muted">{utc(lch.get("ts"))}</span>{rc}</p>')
+        note = f'<p class="tr-note">{e(st["note"])}</p>' if st.get("note") else ""
+        cls = "tr-node" + (f" has-launch v-{state}" if state else "")
+        out.append(f'<li class="{cls}"><div class="tr-who"><span class="tr-role">{e(st.get("role"))}</span>'
+                   f'<a class="tr-addr" href="{EXPLORER}/address/{e(a)}" rel="nofollow noopener" target="_blank"><code>{e(short(a))}</code></a>'
+                   f'<button type="button" class="mini copy" data-copy="{e(a)}">Copy</button></div>{note}{"".join(launches)}</li>')
+    return f'<ol class="trail{" compact" if compact else ""}">{"".join(out)}</ol>'
+
+
+def case_no(c: dict) -> str:
+    return f'Case file {int(c.get("no") or 0):03d}'
+
+
+def case_page(c: dict, feed: dict) -> str:
+    now, up = feed["generated_at"], "../"
+    by = {t["token"]: t for t in feed["tokens"]}
+    draft = ('<p class="draft">Draft: not published. Only the dev server builds this page.</p>'
+             if c.get("status") != "published" else "")
+    tiles = "".join(f"<div><dd>{e(v)}</dd><dt>{e(k)}</dt></div>" for v, k in c.get("tiles") or [])
+    findings = "".join(
+        f'<li><h3>{e(f.get("h"))}</h3><p>{e(f.get("p"))}</p>'
+        + (f'<p class="rc">{"".join(case_link(lb, u, up) for lb, u in f["receipts"])}</p>' if f.get("receipts") else "")
+        + "</li>" for f in c.get("findings") or [])
+    parts = [f"""<section class="casehead"><p class="eyebrow">{case_no(c)} · {case_date(c.get("date"))}
+<span class="pv">Money trail · preview</span></p><h1>{e(c.get("title"))}</h1><p class="lede">{e(c.get("dek"))}</p>{draft}
+<dl class="tally">{tiles}</dl></section>""",
+             f'<section><h2>What we found</h2><ol class="findings">{findings}</ol></section>']
+    if (b := c.get("beads")) and b.get("rows"):
+        parts.append(f'<section><h2>{e(b.get("title"))}</h2>{beads(b["rows"], by, now, up)}</section>')
+    if (tr := c.get("trail")) and tr.get("steps"):
+        body = trail(tr["steps"], by, now, up, compact=bool(tr.get("collapsed")))
+        if tr.get("collapsed"):
+            body = f'<details class="case-more"><summary>Show every wallet and transfer</summary>{body}</details>'
+        parts.append(f'<section><h2>{e(tr.get("title"))}</h2>{body}</section>')
+    if (tk := c.get("tokens")) and tk.get("rows"):
+        parts.append(f'<section><h2>{e(tk.get("title"))}</h2>{case_tokens(tk["rows"], by, now, up)}</section>')
+    if c.get("shows") or c.get("doesnt"):
+        li = lambda xs: "".join(f"<li>{e(x)}</li>" for x in xs or [])  # noqa: E731
+        parts.append(f'<section><h2>What this shows, and what it doesn\'t</h2><div class="how two">'
+                     f'<div><h3>It shows</h3><ul>{li(c.get("shows"))}</ul></div>'
+                     f'<div><h3>It doesn\'t show</h3><ul>{li(c.get("doesnt"))}</ul></div></div></section>')
+    if c.get("related"):
+        parts.append('<section><h2>Related</h2>' + "".join(f'<p>{e(t)} {case_link("Read it", u, up)}</p>'
+                                                          for t, u in c["related"]) + "</section>")
+    if c.get("method"):
+        parts.append('<section class="method"><h2>How we checked</h2>' + "".join(f"<p>{e(p)}</p>" for p in c["method"])
+                     + f'<p class="muted small">Money-trail analysis is in preview here. It is coming to every file on {NAME}. '
+                       f'<a href="{up}cases.html">All case files →</a></p></section>')
+    return f'<div class="stack casefile">{"".join(parts)}</div>'
+
+
+def cases_page(cases: list[dict], feed: dict) -> str:
+    items = []
+    for c in cases:
+        tiles = "".join(f"<div><dd>{e(v)}</dd><dt>{e(k)}</dt></div>" for v, k in (c.get("tiles") or [])[:3])
+        tag = ' <span class="pv draft-tag">Draft</span>' if c.get("status") != "published" else ""
+        items.append(f'<li class="casecard"><a href="case/{e(c["slug"])}.html"><p class="eyebrow">{case_no(c)} · '
+                     f'{case_date(c.get("date"))}{tag}</p><h2>{e(c.get("title"))}</h2><p>{e(c.get("dek"))}</p>'
+                     f'<dl class="tally">{tiles}</dl></a></li>')
+    return f"""<section class="page-head"><p class="eyebrow">Money trail · preview</p><h1>Case files</h1>
+<p class="sub">The deep dives behind the verdicts. Each one follows the money on-chain, and every claim links its receipt.</p></section>
+<ol class="cases">{"".join(items)}</ol>"""
+
+
 def method_page() -> str:
     spec = SPEC.read_text("utf-8") if SPEC.exists() else "# Method\n\nThe methodology is being written."
     spec = re.split(r"^## 11\. ", spec, flags=re.M)[0]  # §11 maps the method onto this codebase: internal
@@ -1492,6 +1672,48 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .more{margin:14px 0 0;font-weight:600}
 .how{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}
 .how>div{background:var(--sheet);border:1px solid var(--rule);border-radius:12px;padding:16px}.how p{margin:10px 0 0;font-size:14px;color:var(--ink-2)}
+.how.two{grid-template-columns:repeat(2,minmax(0,1fr))}.how.two ul{margin:10px 0 0;padding-left:18px;color:var(--ink-2);font-size:14.5px}
+.how.two li+li{margin-top:7px}.how.two h3{font-size:17px}
+@media (max-width:700px){.how.two{grid-template-columns:1fr}}
+.casefile{gap:40px}.casehead .lede{max-width:72ch}.casehead h1{margin-top:4px}
+.pv{display:inline-block;margin-left:8px;padding:2px 9px;border-radius:999px;background:var(--accent-bg);color:var(--accent);letter-spacing:.06em}
+.pv.draft-tag{background:var(--warn-bg);color:var(--warn)}
+.draft{margin:14px 0 0;padding:10px 14px;border:1px dashed var(--warn);border-radius:10px;color:var(--warn);background:var(--warn-bg);font:600 13px var(--mono)}
+.findings{list-style:none;counter-reset:f;margin:14px 0 0;padding:0;display:grid;gap:12px}
+.findings>li{counter-increment:f;position:relative;padding:16px 18px 16px 58px;background:var(--sheet);border:1px solid var(--rule);border-radius:12px}
+.findings>li::before{content:counter(f,decimal-leading-zero);position:absolute;left:18px;top:17px;font:700 15px var(--mono);color:var(--accent)}
+.findings h3{font-size:18px}.findings p{margin:8px 0 0;color:var(--ink-2);max-width:78ch}
+.findings .rc{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13.5px}
+.beads{list-style:none;margin:16px 0 0;padding:0;display:flex;flex-wrap:wrap;row-gap:16px}
+.beads li{display:flex;align-items:flex-start}
+.beads li+li::before{content:"";flex:none;width:10px;height:2px;margin-top:12px;background:var(--rule-2)}
+.beads a{display:flex;flex-direction:column;align-items:center;gap:4px;width:62px;color:var(--ink);text-decoration:none}
+.beads i,.beadkey i{display:block;width:24px;height:24px;border-radius:50%;flex:none;transition:transform .15s;
+  background:radial-gradient(circle at 34% 30%,rgba(255,255,255,.6),var(--st) 44%,color-mix(in srgb,var(--st) 50%,#000) 100%);
+  box-shadow:0 0 12px color-mix(in srgb,var(--st) 45%,transparent)}
+.beads a:hover i,.beads a:focus-visible i{transform:scale(1.15)}
+.beads b{font:600 10.5px var(--mono);max-width:62px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.beads span{font:500 10px var(--mono);color:var(--muted)}
+.beadkey{display:flex;flex-wrap:wrap;gap:6px 16px;margin:14px 0 0;font-size:13px;color:var(--ink-2)}
+.beadkey span{display:inline-flex;align-items:center;gap:7px}.beadkey i{width:12px;height:12px}
+.trail{list-style:none;margin:14px 0 0;padding:0;max-width:760px}
+.tr-node{background:var(--sheet);border:1px solid var(--rule);border-radius:12px;padding:12px 14px}
+.tr-node.has-launch{border-color:color-mix(in srgb,var(--st) 45%,var(--rule));box-shadow:inset 3px 0 0 var(--st)}
+.tr-who{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.tr-role{font:600 11px var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.tr-addr{text-decoration:none}.tr-note{margin:6px 0 0;font-size:14px;color:var(--ink-2)}
+.tr-launch{margin:8px 0 0;font-size:14px;display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
+.tr-edge{position:relative;margin-left:24px;padding:10px 0 14px 20px;border-left:2px dashed var(--rule-2)}
+.tr-edge::after{content:"";position:absolute;left:-7px;bottom:-1px;border:6px solid transparent;border-top:8px solid var(--rule-2);border-bottom:0}
+.tr-moves{list-style:none;margin:0;padding:0;display:grid;gap:4px;font-size:14px}
+.tr-moves li{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px}.tr-moves b{font-family:var(--mono)}
+.trail.compact .tr-node{padding:8px 12px}.trail.compact .tr-edge{padding:5px 0 9px 20px}.trail.compact .tr-launch{margin-top:4px}
+.case-more{margin-top:14px}.case-more>summary{cursor:pointer;font-weight:600;color:var(--accent)}
+.method p{color:var(--ink-2);max-width:76ch}
+.cases{list-style:none;margin:0;padding:0;display:grid;gap:14px}
+.casecard>a{display:block;padding:20px 22px;background:var(--sheet);border:1px solid var(--rule);border-radius:14px;color:inherit;text-decoration:none;transition:border-color .15s}
+.casecard>a:hover{border-color:var(--rule-2)}.casecard h2{font-size:clamp(21px,3vw,26px)}.casecard p{color:var(--ink-2);max-width:76ch}
+.casecard .tally{margin-top:16px}
 .crumb{margin:0 0 6px;font-weight:600}
 .file{position:relative;background:var(--sheet);border:1px solid var(--rule);border-radius:0 14px 14px 14px;padding:22px 22px 20px;margin-top:18px}
 .file-tab{position:absolute;left:-1px;top:-31px;height:32px;padding:8px 16px 0;background:var(--sheet);border:1px solid var(--rule);border-bottom:0;border-radius:10px 10px 0 0;font:600 11.5px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted);white-space:nowrap;max-width:calc(100% + 2px);overflow:hidden;text-overflow:ellipsis}
@@ -2165,7 +2387,14 @@ def build(feed: dict, out: Path = OUT) -> int:
     now = feed["generated_at"]
     ON_FILE.clear()
     ON_FILE.update(t["token"] for t in feed["tokens"])
+    CASES[:] = load_cases()  # before any page: the header links them
     put("index.html", f"{NAME}: which Orbio launch is the real one?", home(feed))
+    if CASES:
+        (tmp / "case").mkdir()
+        put("cases.html", f"Case files · {NAME}", cases_page(CASES, feed),
+            desc="The deep dives behind Dossier's verdicts: following the money on-chain, every claim with its receipt.")
+        for c in CASES:
+            put(f'case/{c["slug"]}.html', f'{c.get("title")} · {NAME}', case_page(c, feed), depth=1, desc=c.get("dek") or "")
     put("agents.html", f"Every Orbio agent · {NAME}", agents_page(feed))
     put("scams.html", f"Impersonators caught · {NAME}", scams_page(feed))
     put("method.html", f"Method · {NAME}", method_page(), desc="How Dossier decides which tokens are real.")
@@ -2180,7 +2409,9 @@ def build(feed: dict, out: Path = OUT) -> int:
     site = site_url()
     (tmp / "robots.txt").write_text("User-agent: *\nAllow: /\n" + (f"Sitemap: {site}/sitemap.xml\n" if site else ""), "utf-8")
     if site:
-        pages = ["", "agents.html", "scams.html", "token.html", "method.html", "api.html"] + [f't/{t["token"]}.html' for t in feed["tokens"]]
+        live_cases = [c for c in CASES if c.get("status") == "published"]  # never a draft, even on the dev server
+        pages = ["", "agents.html", "scams.html", "token.html", "method.html", "api.html"] + [f't/{t["token"]}.html' for t in feed["tokens"]] \
+            + (["cases.html"] + [f'case/{c["slug"]}.html' for c in live_cases] if live_cases else [])
         (tmp / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
                                          + "".join(f"<url><loc>{e(site)}/{p}</loc></url>\n" for p in pages) + "</urlset>\n", "utf-8")
     for t in feed["tokens"]:
@@ -2278,8 +2509,20 @@ def build_single(feed: dict, name: str = NAME) -> str:
         NAME = saved
 
 
-def serve(port: int, folder: Path = OUT) -> None:
-    """Preview the built site the way the host serves it: an address with no file gets 404.html, with a 404."""
+def lan_ip() -> str | None:
+    """This machine's address on the local network (the interface that would reach the internet; nothing is sent)."""
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            return s.getsockname()[0]
+    except OSError:
+        return None
+
+
+def serve(port: int, folder: Path = OUT, host: str = "127.0.0.1") -> None:
+    """Preview the built site the way the host serves it: an address with no file gets 404.html, with a 404. With
+    host 0.0.0.0, other devices on the same network (a phone) can open it too."""
     import http.server
 
     class Handler(http.server.SimpleHTTPRequestHandler):
@@ -2300,7 +2543,9 @@ def serve(port: int, folder: Path = OUT) -> None:
                 self.wfile.write(body)
 
     print(f"serving {folder} on http://127.0.0.1:{port}", flush=True)
-    http.server.ThreadingHTTPServer(("127.0.0.1", port), functools.partial(Handler, directory=str(folder))).serve_forever()
+    if host in ("0.0.0.0", "") and (ip := lan_ip()):
+        print(f"on this network: http://{ip}:{port}", flush=True)
+    http.server.ThreadingHTTPServer((host, port), functools.partial(Handler, directory=str(folder))).serve_forever()
 
 
 def main() -> None:
@@ -2309,9 +2554,10 @@ def main() -> None:
     ap.add_argument("--single", type=Path, help="also write the whole site as one page to this file (a preview)")
     ap.add_argument("--name", default=NAME, help="the site's name in the one-page build")
     ap.add_argument("--serve", type=int, metavar="PORT", help="don't build: preview the built site on localhost:PORT")
+    ap.add_argument("--host", default="127.0.0.1", help="the address --serve listens on (0.0.0.0: the whole local network)")
     args = ap.parse_args()
     if args.serve:
-        return serve(args.serve, args.out)
+        return serve(args.serve, args.out, args.host)
     import proof_index as p  # here, not at the top: the indexer imports this module to rebuild the site
     p.CURVES_PER_PASS = 1000  # one build, no next pass to fill in the rest: read every curve now
     w.load_env()
