@@ -2241,10 +2241,12 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .cf-mark{align-self:flex-end;margin:-2px 0 -6px;transform:rotate(-6deg);font-size:11px;padding:3px 8px;border-width:2px}
 .cf-mark.draft{color:#9a5b00;border-color:#9a5b00}
 .cf-doc h2{margin:2px 0 0;font:800 clamp(22px,2.6vw,28px)/1.08 var(--display);color:var(--ink)}
-.cf-dek{margin:0;font-size:14px;line-height:1.5;color:var(--ink-2)}
-.cf-tiles{display:flex;gap:18px;margin:4px 0 0}.cf-tiles div{display:flex;flex-direction:column-reverse}
-.cf-tiles dd{margin:0;font:700 24px/1.1 var(--mono);color:var(--ink)}.cf-tiles dt{font-size:11.5px;color:var(--ink-2)}
-.cf-exhibit{margin-top:4px;padding:10px 12px;border:1px dashed var(--rule-p);border-radius:4px;background:rgba(255,255,255,.4)}
+.cf-paper>*{flex-shrink:0}
+.cf-dek{margin:0;font-size:14px;line-height:1.5;color:var(--ink-2);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:5;overflow:hidden}
+.cf-tiles{display:flex;flex-wrap:wrap;gap:6px 18px;margin:4px 0 0}.cf-tiles div{display:flex;flex-direction:column-reverse}
+.cf-tiles dd{margin:0;font:700 24px/1.1 var(--mono);color:var(--ink);white-space:nowrap}.cf-tiles dt{font-size:11.5px;color:var(--ink-2)}
+/* a page's height is fixed: the exhibit gives way, so the link to the file always shows */
+.cf-exhibit{margin-top:4px;padding:10px 12px;border:1px dashed var(--rule-p);border-radius:4px;background:rgba(255,255,255,.4);flex-shrink:1;min-height:0;overflow:hidden}
 .cf-exhibit .cf-k{margin-bottom:8px;font-size:10px}
 .cf-dots{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px}
 .cf-dots li{width:10px;height:10px;border-radius:50%;background:var(--st);box-shadow:inset 0 0 0 1px rgba(0,0,0,.15)}
