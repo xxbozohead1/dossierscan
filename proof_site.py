@@ -387,7 +387,7 @@ def live_data(feed: dict) -> dict:
                "ch": a.get("change_pct"), "chh": a.get("change_hours"), "h": h, "hk": hk,
                "sp": [[x, round(y)] for x, y in thin(a.get("history") or [], 24)],
                "tb": tr.get("balance_usdg"), "tk": tr.get("staked_orbio"), "tw": tr.get("withdrawn_orbio") or None,
-               "te": ((tr.get("credit_owed") or 0) + (tr.get("credit_claimed") or 0)) if tr else None,
+               "te": ((tr.get("credit_owed") or 0) + (tr.get("credit_claimed") or 0) + (tr.get("credit_minted") or 0)) if tr else None,
                "ta": tr.get("credit_activated"), "tu": tr.get("unlocks_at"), "tl": 1 if tr.get("locked") else None}
         out[t["token"]] = {k: v for k, v in row.items() if v is not None and v != []}
     return {"at": now, "net": feed.get("network") or {}, "t": out}
@@ -1300,24 +1300,30 @@ def trader_block(t: dict, now: int) -> str:
             "</p></section>")
 
 
-# how an agent's creator fees split, told apart by the treasury fee it launched with (Orbio's feeBps). Orbio changed its
-# terms at agent #472 (1 Oct 2026, 18:05 UTC): the treasury's 5% became 10%, and 30% is now minted to the agent as CREDIT
-FEE_TERMS = {500: {"staked": 50, "credit": 0, "balance": 45, "orbio": 5},
-             1000: {"staked": 50, "credit": 30, "balance": 10, "orbio": 10}}
+# How Orbio splits every agent's creator fees: its live terms (network.fee_terms, read each build), else this. Orbio
+# changed the split on 2026-10-01 at 18:05 UTC for every agent, older ones included, although their records kept the
+# old fee (feeBps 500). Fees collected before then split 50% staked, 45% AI balance, 5% Orbio.
+FEE_SPLIT_NOW = {"staked": 50, "credit": 30, "balance": 10, "orbio": 10}
+FEE_SPLIT_BEFORE = {"staked": 50, "credit": 0, "balance": 45, "orbio": 5}
+FEE_CHANGED_AT = 1_790_877_930  # 2026-10-01 18:05:30 UTC
+TERMS: dict = {}  # this build's live terms, set by build() and build_single()
+
+
+def fee_terms() -> dict:
+    return dict(TERMS) if TERMS and sum(TERMS.values()) == 100 else dict(FEE_SPLIT_NOW)
 
 
 def fee_terms_text(t: dict) -> str:
-    """The treasury's opening line, on the agent's own terms, with the fees it has collected so far."""
-    tr = t.get("treasury") or {}
-    k = FEE_TERMS.get(tr.get("fee_bps"))
-    if not k:  # terms this build doesn't know: no percentages rather than wrong ones
-        s = ("Trading fees fund this agent: part is staked as ORBIO and earns CREDIT, and part becomes a balance it can "
-             "spend on models and tools.")
-    else:
-        staked = "half" if k["staked"] == 50 else f'{k["staked"]}%'
-        s = (f'Trading fees fund this agent: {staked} is staked as ORBIO'
-             + (f', {k["credit"]}% is minted to it as CREDIT, {k["balance"]}%' if k["credit"] else f' and earns CREDIT, {k["balance"]}%')
-             + f' becomes a balance it can spend on models and tools, and {k["orbio"]}% goes to Orbio.')
+    """The treasury's opening line: how this agent's fees split now, how they split before Orbio's change when it
+    launched before it, and what it has collected."""
+    tr, k = t.get("treasury") or {}, fee_terms()
+    staked = "half" if k["staked"] == 50 else f'{k["staked"]:g}%'
+    s = (f'Trading fees fund this agent: {staked} is staked as ORBIO and earns CREDIT, '
+         + (f'{k["credit"]:g}% is minted to it as CREDIT, ' if k["credit"] else "")
+         + f'{k["balance"]:g}% becomes a balance it can spend on models and tools, and {k["orbio"]:g}% goes to Orbio.')
+    if 0 < (t.get("launched_at") or 0) < FEE_CHANGED_AT:
+        b = FEE_SPLIT_BEFORE
+        s += f' Until 1 October, {b["balance"]}% went to that balance and {b["orbio"]}% to Orbio, and none was minted as CREDIT.'
     if tr.get("fees_orbio"):
         s += f' It has collected {tr["fees_orbio"]:,.0f} ORBIO in fees so far.'
     return s
@@ -1731,21 +1737,25 @@ stake, CREDIT and the agent's spendable balance.</li>
 # ----------------------------------------------------------------- $DOSSIER: the token page
 
 TOKEN_DOC = ROOT / "docs" / "token.md"
-FEE_SPLIT = ((45, "Dossier's compute", "AI balance: pays for every check", "c-compute"),
-             (50, "Staked as ORBIO", "earns CREDIT: compute first, then buybacks", "c-stake"),
-             (5, "Orbio's treasury", "the launchpad's share", "c-orbio"))
+def fee_split_parts() -> tuple:
+    """The token page's split bar, from the terms in force."""
+    k = fee_terms()
+    return tuple(p for p in ((k["staked"], "Staked as ORBIO", "earns CREDIT rewards; never withdrawn", "c-stake"),
+                             (k["credit"], "Minted as CREDIT", "compute first, then buybacks", "c-credit"),
+                             (k["balance"], "Dossier's compute", "AI balance: pays for every check", "c-compute"),
+                             (k["orbio"], "Orbio's treasury", "the launchpad's share", "c-orbio")) if p[0])
 PASS_SPLIT = ((70, "Burned", "sent to the dead address in batches", "c-burn"),
               (30, "Treasury", "runs and grows Dossier", "c-treasury"))
 FLYWHEEL = (("Right, fast verdicts", "Each verdict links its receipt, often within minutes of launch."),
             ("Hunters rely on it", "They check a launch before they buy. The keenest buy a pass."),
             ("Fees and passes", "Trading pays creator fees. Passes are paid in $DOSSIER."),
-            ("More checks, less supply", "Fees buy faster, wider checks. Passes and stake rewards buy back and burn $DOSSIER."))
+            ("More checks, less supply", "Fees buy faster, wider checks. Passes and CREDIT buy back and burn $DOSSIER."))
 BURN_SHARE = 0.7
 
 
 def split_bar(parts, label: str) -> str:
-    bar = "".join(f'<span class="{c}" style="width:{p}%" title="{p}%: {e(name)}"></span>' for p, name, _, c in parts)
-    legend = "".join(f'<li><i class="{c}"></i><b>{p}%</b> {e(name)}<span>{e(note)}</span></li>' for p, name, note, c in parts)
+    bar = "".join(f'<span class="{c}" style="width:{p:g}%" title="{p:g}%: {e(name)}"></span>' for p, name, _, c in parts)
+    legend = "".join(f'<li><i class="{c}"></i><b>{p:g}%</b> {e(name)}<span>{e(note)}</span></li>' for p, name, note, c in parts)
     return f'<div class="split" role="img" aria-label="{e(label)}">{bar}</div><ul class="split-legend">{legend}</ul>'
 
 
@@ -1757,9 +1767,10 @@ def fees_collected(d: dict, feed: dict) -> str:
     px = (feed.get("network") or {}).get("orbio_usd")
     worth = f" (about {usd(tr['fees_orbio'] * px)})" if px else ""
     orbio = lambda k: f"{tr.get(k) or 0:,.0f} ORBIO"  # noqa: E731 -- whole numbers, one style through the sentence
+    minted = f' and {tr["credit_minted"]:,.2f} CREDIT' if tr.get("credit_minted") else ""
     return (f'<p class="collected">So far $DOSSIER\'s trading has paid <b>{orbio("fees_orbio")}</b> in creator fees{e(worth)}: '
-            f'{orbio("staked_orbio")} staked, {orbio("sold_orbio")} sold for {e(usd(tr.get("balance_usdg") or 0))} of compute, '
-            f'and {orbio("orbio_cut_orbio")} to Orbio.</p>')
+            f'{orbio("staked_orbio")} staked, {orbio("sold_orbio")} sold for {e(usd(tr.get("balance_usdg") or 0))} of compute'
+            f'{minted}, and {orbio("orbio_cut_orbio")} to Orbio.</p>')
 
 
 def official_contract(d: dict) -> str:
@@ -1799,6 +1810,7 @@ def ledger(d: dict, feed: dict) -> str:
         rows += [("Creator fees collected", num(tr.get("fees_orbio") or 0, "ORBIO")),
                  ("AI balance credited by fees", usd(tr.get("balance_usdg"))), ("AI balance left for checks", usd(left)),
                  ("Compute runway, estimated", runway), ("ORBIO staked", num(tr.get("staked_orbio"), "ORBIO")),
+                 ("CREDIT minted from fees", f'{tr.get("credit_minted") or 0:.2f}'),
                  ("CREDIT earned by the stake", f'{(tr.get("credit_owed") or 0) + (tr.get("credit_claimed") or 0):.2f}'),
                  ("Stake withdrawn (policy: never)", num(tr.get("withdrawn_orbio") or 0, "ORBIO")),
                  ("Pass revenue", rev_s), ("Burned (dead address)", "—" if burned is None else num(burned, "$DOSSIER"))]
@@ -1818,8 +1830,10 @@ def ledger(d: dict, feed: dict) -> str:
 def strategy_page(feed: dict) -> str:
     d = feed.get("dossier") or {}
     text = TOKEN_DOC.read_text("utf-8") if TOKEN_DOC.exists() else "# $DOSSIER\n\nComing soon."
+    k = fee_terms()
     blocks = {"contract": official_contract(d),
-              "fees": split_bar(FEE_SPLIT, "Creator fees: 45% compute, 50% stake, 5% Orbio") + fees_collected(d, feed),
+              "fees": split_bar(fee_split_parts(), f'Creator fees: {k["staked"]:g}% stake, {k["credit"]:g}% CREDIT, '
+                                f'{k["balance"]:g}% compute, {k["orbio"]:g}% Orbio') + fees_collected(d, feed),
               "passes": split_bar(PASS_SPLIT, "Pass revenue: 70% burned, 30% treasury"), "flywheel": flywheel(),
               "ledger": ledger(d, feed)}
     body = re.sub(r"<p>@@(\w+)@@</p>", lambda m: blocks.get(m.group(1), ""), md(text))
@@ -2332,7 +2346,7 @@ th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] bu
 .official .big{font:700 20px var(--display);font-stretch:92%;margin:0}
 .split{display:flex;height:14px;border-radius:7px;overflow:hidden;margin:16px 0 12px;background:var(--rule)}
 .split span{display:block;height:100%}.split span+span{border-left:2px solid var(--bg)}
-.c-compute{background:var(--ok)}.c-stake{background:var(--accent)}.c-orbio{background:var(--rule-2)}.c-burn{background:var(--bad)}
+.c-compute{background:var(--ok)}.c-stake{background:var(--accent)}.c-credit{background:var(--warn)}.c-orbio{background:var(--rule-2)}.c-burn{background:var(--bad)}
 .c-treasury{background:var(--accent)}
 .split-legend{list-style:none;padding:0;margin:0 0 8px;display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px 20px;font-size:14px}
 .split-legend li{max-width:none}.split-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:7px}
@@ -2447,7 +2461,7 @@ JS = r"""
     trt_bal:function(r){return '<b class="tv-v">'+usd(r.tb)+'</b><small>USDG for inference and tools</small>'},
     trt_staked:function(r){return '<b class="tv-v">'+num(r.tk||0)+'<em> ORBIO</em></b><small>'+
       (r.tu?(r.tl?'<span class="lock">Locked</span>unlocks '+rel(now()-r.tu):'Unlocked'):'Staked for CREDIT')+'</small>'},
-    trt_earned:function(r){return '<b class="tv-v">'+num(r.te||0)+'<em> CREDIT</em></b><small>owed plus claimed</small>'},
+    trt_earned:function(r){return '<b class="tv-v">'+num(r.te||0)+'<em> CREDIT</em></b><small>minted from fees and earned by the stake</small>'},
     trt_act:function(r){return '<b class="tv-v">'+num(r.ta||0)+'<em> CREDIT</em></b><small>spent into its gateway balance</small>'},
     trt_wd:function(r){var wd=r.tw||0;return '<b class="tv-v'+(wd?' bad':'')+'">'+num(wd)+'<em> ORBIO</em></b><small>'+
       (wd?'taken out of the stake':'Never touched: the stake is intact')+'</small>'}
@@ -2876,6 +2890,8 @@ def build(feed: dict, out: Path = OUT) -> int:
     now = feed["generated_at"]
     ON_FILE.clear()
     ON_FILE.update(t["token"] for t in feed["tokens"])
+    TERMS.clear()
+    TERMS.update((feed.get("network") or {}).get("fee_terms") or {})
     CASES[:] = load_cases()  # before any page: the header links them
     put("index.html", f"{NAME}: which Orbio launch is the real one?", home(feed))
     if CASES:
@@ -2969,6 +2985,8 @@ def build_single(feed: dict, name: str = NAME) -> str:
         now = feed["generated_at"]
         ON_FILE.clear()
         ON_FILE.update(t["token"] for t in feed["tokens"])
+        TERMS.clear()
+        TERMS.update((feed.get("network") or {}).get("fee_terms") or {})
         views = [("home", f"{name}: which Orbio launch is the real one?", home(feed)),
                  ("agents", f"Every Orbio agent · {name}", agents_page(feed)),
                  ("all-scams", f"Impersonators caught · {name}", scams_page(feed)),

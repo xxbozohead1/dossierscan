@@ -8,21 +8,22 @@ the bottom shows the numbers as they happen.
 
 ## Where the trading fees go
 
-Every $DOSSIER trade pays a creator fee. Orbio's contracts split it three ways, on the terms $DOSSIER launched with,
-before anyone touches it:
+Every $DOSSIER trade pays a creator fee. Orbio's contracts collect it every few minutes and split it four ways before
+anyone touches it:
 
 @@fees@@
 
-- **45% becomes Dossier's compute.** Orbio sells it for USDG and credits it as an AI balance, which can only be spent
-  on Orbio's tools and models. That is what a verdict costs: reading a project's X posts, fetching its website, and
-  pulling out what it claims to have built.
-- **50% is staked as ORBIO,** and the stake earns CREDIT. The CREDIT goes to compute first. Once the AI balance covers
-  90 days of checks, claimed CREDIT is sold to buy back and burn $DOSSIER. The staked ORBIO itself is never withdrawn:
-  it stays staked for good and keeps earning, and the ledger shows it.
-- **5% goes to Orbio's launchpad treasury.**
+- **50% is staked as ORBIO,** and the stake earns CREDIT. The staked ORBIO is never withdrawn: it stays staked for good
+  and keeps earning, and the ledger shows it.
+- **30% is minted as CREDIT.** Orbio sells it for USDG and mints CREDIT to the agent. Like the stake's CREDIT, it goes to
+  compute first. Once the AI balance covers 90 days of checks, CREDIT is sold to buy back and burn $DOSSIER.
+- **10% becomes Dossier's compute.** Orbio sells it for USDG and credits it as an AI balance, which can only be spent on
+  Orbio's tools and models. That is what a verdict costs: reading a project's X posts, fetching its website, and pulling
+  out what it claims to have built.
+- **10% goes to Orbio's launchpad treasury.**
 
-Orbio changed its terms for launches from agent #472 on (1 October): their fees split four ways, 50% staked, 30% minted
-as CREDIT, 10% AI balance and 10% to Orbio. $DOSSIER keeps the split it launched with.
+Orbio set this split on 1 October for every agent. Before that, 50% was staked, 45% went straight to the AI balance and
+5% to Orbio, which is where most of the compute balance so far came from.
 
 ## What the compute pays for
 
