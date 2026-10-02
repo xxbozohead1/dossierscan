@@ -443,21 +443,36 @@ def pack(radii: list[float], gap: float = 3.0, angles: int = 18) -> list[tuple[f
     the centre among the spots touching one already placed. Returns centres, in input order."""
     placed: list[tuple[float, float, float]] = []
     trig = [(math.cos(2 * math.pi * k / angles), math.sin(2 * math.pi * k / angles)) for k in range(angles)]
+    # A spot is free when no circle overlaps it. Testing every circle for every spot took 11 s for the 450 launches of
+    # the Build Week days, so the same test is made with less work, and the layout is the same to the last bit:
+    # - only the circles near the spot are tried: two circles can touch only when their centres are within a cell of
+    #   each other, so the nine cells around a spot hold every circle that could be in its way;
+    # - the circle that was in the way of a spot last time is tried first: inside the cluster it usually still is.
+    cell = 2 * max(radii, default=0.0) + gap + 1e-3
+    grid: dict[tuple[int, int], list[tuple[float, float, float]]] = {}
+    blockers: list[list] = []  # per placed circle and angle: the circle found in the way of that spot
     for r in radii:
-        if not placed:
-            placed.append((0.0, 0.0, r))
-            continue
-        best = None
-        for x0, y0, r0 in placed:
+        best = None if placed else (0.0, 0.0, 0.0)
+        for (x0, y0, r0), blocked in zip(placed, blockers):
             d0 = r0 + r + gap
-            for c, s in trig:
+            for k, (c, s) in enumerate(trig):
                 x, y = x0 + d0 * c, y0 + d0 * s
                 dist = x * x + y * y
                 if best is not None and dist >= best[0]:
                     continue
-                if all((x - x1) ** 2 + (y - y1) ** 2 >= (r + r1 + gap) ** 2 - 1e-6 for x1, y1, r1 in placed):
+                b = blocked[k]
+                if b is not None and (x - b[0]) ** 2 + (y - b[1]) ** 2 < (r + b[2] + gap) ** 2 - 1e-6:
+                    continue
+                gx, gy = math.floor(x / cell), math.floor(y / cell)
+                b = next((p for i in (gx - 1, gx, gx + 1) for j in (gy - 1, gy, gy + 1) for p in grid.get((i, j), ())
+                          if (x - p[0]) ** 2 + (y - p[1]) ** 2 < (r + p[2] + gap) ** 2 - 1e-6), None)
+                if b is None:
                     best = (dist, x, y)
+                else:
+                    blocked[k] = b
         placed.append((best[1], best[2], r))
+        blockers.append([None] * angles)
+        grid.setdefault((math.floor(best[1] / cell), math.floor(best[2] / cell)), []).append(placed[-1])
     return [(x, y) for x, y, _ in placed]
 
 
@@ -3017,8 +3032,104 @@ JS = JS.replace("@@SEAL@@", SEAL).replace("@@VTEXT@@", json.dumps(STATE_TEXT["ve
 
 # ----------------------------------------------------------------- build
 
-def build(feed: dict, out: Path = OUT) -> int:
-    """Write the whole site into a fresh folder, then swap it in, so a host serving `out` never sees half a site."""
+PAGE_ADDR = re.compile(r"0x[0-9a-f]{40}")
+_page_keys: dict[str, str] = {}  # a token page's path -> what it was rendered from (page_key), for this process's builds
+
+
+def site_key(feed: dict) -> str:
+    """What every page shows whichever token it is about: the header, the footer, the fee terms, the assets."""
+    d = feed.get("dossier") or {}
+    return json.dumps([feed.get("method"), bool(d.get("launched")), d.get("token"), TERMS, bool(CASES), bot_username(),
+                       site_url(), os.environ.get("DOSSIER_LIVE_URL"), asset_version(), file_version(LOGO),
+                       file_version(OG_IMAGE)], sort_keys=True, default=str)
+
+
+def page_key(t: dict, feed: dict, site: str) -> str:
+    """Changes when anything a token's page shows changes. The page draws its market numbers from live.json, so they
+    aren't part of it; what it does print of them is (the holder counts, the fees collected), with its state at this
+    build's time and whether each token it mentions has a page to link to."""
+    tr = t.get("treasury") or {}
+    blob = json.dumps({**{k: v for k, v in t.items() if k not in ("market", "activity", "treasury")},
+                       "_state": state_of(t, feed["generated_at"]), "_treasury": [bool(t.get("treasury")), tr.get("fees_orbio")]},
+                      sort_keys=True, default=str)
+    linked = sorted(a for a in set(PAGE_ADDR.findall(blob)) if a in ON_FILE)
+    return hashlib.sha256((site + blob + ",".join(linked)).encode()).hexdigest()
+
+
+def set_build(feed: dict) -> None:
+    """What the page functions read from the build they're part of: the tokens with a page, the fee terms, the cases."""
+    ON_FILE.clear()
+    ON_FILE.update(t["token"] for t in feed["tokens"])
+    TERMS.clear()
+    TERMS.update((feed.get("network") or {}).get("fee_terms") or {})
+    CASES[:] = load_cases()  # before any page: the header links them
+
+
+def token_html(t: dict, feed: dict) -> str:
+    s = STATE[state_of(t, feed["generated_at"])]
+    return page(f'${t["symbol"]}: {s} · {NAME}', token_page(t, feed), feed, 1, f'{s}: {sentence(t["verdict"]["why"])}',
+                path=f't/{t["token"]}.html')
+
+
+def token_json(t: dict, feed: dict) -> str:
+    return json.dumps({"method": feed["method"], "generated_at": feed["generated_at"], **t}, ensure_ascii=False)
+
+
+def list_pages(feed: dict, home_too: bool = True) -> list[tuple[str, str, str]]:
+    """(path, title, body) of the pages that list tokens: the home page, every agent, the impersonators."""
+    return ([("index.html", f"{NAME}: which Orbio launch is the real one?", home(feed))] if home_too else []) + [
+        ("agents.html", f"Every Orbio agent · {NAME}", agents_page(feed)),
+        ("scams.html", f"Impersonators caught · {NAME}", scams_page(feed))]
+
+
+def replace_text(path: Path, text: str) -> None:
+    """Write a file of a site that's being served: whole, or not at all."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, "utf-8")
+    os.replace(tmp, path)
+
+
+def publish(feed: dict, tokens: list[str], out: Path = OUT) -> int:
+    """Write these tokens' pages, the agent and impersonator lists and the live numbers into the site as it stands,
+    each file replaced whole. The indexer's hot lane calls it when a launch or a verdict lands, so the page a channel
+    post links to is there seconds later; the full build (every page, the feed, the sitemap) follows within a pass.
+    The home page isn't written: it draws new launches and verdicts from live.json itself, and its launch map is the
+    slowest thing on the site to lay out. A site not built yet is built whole."""
+    if not (out / "index.html").exists():
+        return build(feed, out)
+    set_build(feed)
+    site, by = site_key(feed), {t["token"]: t for t in feed["tokens"]}
+    done = 0
+    for a in tokens:
+        if a not in by:
+            continue
+        replace_text(out / "t" / f"{a}.html", token_html(by[a], feed))
+        replace_text(out / "api" / "v1" / "tokens" / f"{a}.json", token_json(by[a], feed))
+        _page_keys[str(out / "t" / f"{a}.html")] = page_key(by[a], feed, site)
+        done += 1
+    for rel, title, body in list_pages(feed, home_too=False):
+        replace_text(out / rel, page(title, body, feed, path=rel))
+    write_live(feed, out)
+    return done
+
+
+def carry(was: Path, to: Path) -> bool:
+    """Bring a page of the site being replaced into the new one: a hard link, or a copy where links aren't allowed."""
+    try:
+        os.link(was, to)
+    except OSError:
+        try:
+            shutil.copyfile(was, to)
+        except OSError:
+            return False
+    return True
+
+
+def build(feed: dict, out: Path = OUT, tick=None) -> int:
+    """Write the whole site into a fresh folder, then swap it in, so a host serving `out` never sees half a site.
+    A token page whose content is what this process last rendered (page_key) is carried over rather than rendered
+    again: with a thousand files a build took 13 s, nearly all of it pages that hadn't changed. `tick` is called
+    between token pages (the indexer lets its hot lane in there; true when it published pages of its own)."""
     tmp = out.with_name(out.name + ".new")
     if tmp.exists():
         shutil.rmtree(tmp)
@@ -3031,21 +3142,15 @@ def build(feed: dict, out: Path = OUT) -> int:
     def put(rel: str, title: str, body: str, depth: int = 0, desc: str = "") -> None:
         (tmp / rel).write_text(page(title, body, feed, depth, desc, path=rel), "utf-8")
 
-    now = feed["generated_at"]
-    ON_FILE.clear()
-    ON_FILE.update(t["token"] for t in feed["tokens"])
-    TERMS.clear()
-    TERMS.update((feed.get("network") or {}).get("fee_terms") or {})
-    CASES[:] = load_cases()  # before any page: the header links them
-    put("index.html", f"{NAME}: which Orbio launch is the real one?", home(feed))
+    set_build(feed)
+    for rel, title, body in list_pages(feed):
+        put(rel, title, body)
     if CASES:
         (tmp / "case").mkdir()
         put("cases.html", f"Case files · {NAME}", cases_page(CASES, feed),
             desc="The deep dives behind Dossier's verdicts: following the money on-chain, every claim with its receipt.")
         for c in CASES:
             put(f'case/{c["slug"]}.html', f'{c.get("title")} · {NAME}', case_page(c, feed), depth=1, desc=c.get("dek") or "")
-    put("agents.html", f"Every Orbio agent · {NAME}", agents_page(feed))
-    put("scams.html", f"Impersonators caught · {NAME}", scams_page(feed))
     put("method.html", f"Method · {NAME}", method_page(), desc="How Dossier decides which tokens are real.")
     put("api.html", f"API · {NAME}", api_page(feed))
     put("token.html", f"$DOSSIER · {NAME}", strategy_page(feed),
@@ -3063,12 +3168,16 @@ def build(feed: dict, out: Path = OUT) -> int:
             + (["cases.html"] + [f'case/{c["slug"]}.html' for c in live_cases] if live_cases else [])
         (tmp / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
                                          + "".join(f"<url><loc>{e(site)}/{p}</loc></url>\n" for p in pages) + "</urlset>\n", "utf-8")
+    site_k, keys = site_key(feed), {}
     for t in feed["tokens"]:
-        s = STATE[state_of(t, now)]
-        put(f't/{t["token"]}.html', f'${t["symbol"]}: {s} · {NAME}', token_page(t, feed), depth=1,
-            desc=f'{s}: {sentence(t["verdict"]["why"])}')
-        (tmp / "api" / "v1" / "tokens" / f'{t["token"]}.json').write_text(
-            json.dumps({"method": feed["method"], "generated_at": feed["generated_at"], **t}, ensure_ascii=False), "utf-8")
+        if tick and tick():
+            set_build(feed)  # publish() set these for the pages it wrote
+        rel = f't/{t["token"]}.html'
+        was, key = out / rel, page_key(t, feed, site_k)
+        keys[str(was)] = key
+        if not (_page_keys.get(str(was)) == key and carry(was, tmp / rel)):
+            (tmp / rel).write_text(token_html(t, feed), "utf-8")
+        (tmp / "api" / "v1" / "tokens" / f'{t["token"]}.json').write_text(token_json(t, feed), "utf-8")
     (tmp / "api" / "v1" / "feed.json").write_text(json.dumps(feed, ensure_ascii=False), "utf-8")
     write_live(feed, tmp)
     (tmp / "api" / "v1" / "summary.json").write_text(json.dumps(
@@ -3083,6 +3192,9 @@ def build(feed: dict, out: Path = OUT) -> int:
         out.rename(old)
     tmp.rename(out)
     shutil.rmtree(old, ignore_errors=True)
+    for k in [k for k in _page_keys if Path(k).parent.parent == out]:
+        del _page_keys[k]
+    _page_keys.update(keys)
     return len(feed["tokens"])
 
 
