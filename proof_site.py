@@ -1618,6 +1618,97 @@ def case_no(c: dict) -> str:
     return f'Case file {int(c.get("no") or 0):03d}'
 
 
+# A finding's figure: the gist at a glance above its full text (case JSON "fig"). Three kinds, all HTML and CSS, so they
+# read at phone width: "lanes" (a timeline, one row per actor), "split" (a proportional bar) and "flow" (boxes and
+# arrows, stacked on a phone). Colours come by role, from the theme's tokens: x and y for the two sides of a story, z for
+# a third, bad, ok, hi (the focal part), mid and lo.
+FIG_ROLES = ("x", "y", "z", "bad", "ok", "hi", "mid", "lo")
+
+
+def fig_role(r) -> str:
+    return f"r-{r}" if r in FIG_ROLES else "r-lo"
+
+
+def fig_lanes(f: dict) -> str:
+    t0, t1 = int(f["from"]), int(f["to"])
+    pct = lambda t: max(0.0, min(100.0, (int(t) - t0) / max(1, t1 - t0) * 100))  # noqa: E731
+    edge = lambda x: " at-start" if x < 6 else " at-end" if x > 94 else ""  # a label at either end stays inside  # noqa: E731
+    rules = "".join(f'<span class="ln-rule" style="left:{pct(r["ts"]):.2f}%"></span>' for r in f.get("rules") or [])
+    rows = []
+    for ln in f.get("lanes") or []:
+        track = [rules]
+        for s in ln.get("spans") or []:
+            a, b = pct(s["from"]), pct(s["to"])
+            track.append(f'<span class="ln-span" style="left:{a:.2f}%;width:{max(.8, b - a):.2f}%" title="{e(s.get("title", ""))}">'
+                         f'{e(s.get("label", ""))}</span>')
+        for p in ln.get("points") or []:
+            role = f' {fig_role(p["role"])}' if p.get("role") else ""
+            track.append(f'<span class="ln-pt{role}" style="left:{pct(p["ts"]):.2f}%;--s:{float(p.get("s", .5)):.2f}" '
+                         f'title="{e(p.get("title", ""))}"></span>')
+        for m in ln.get("marks") or []:
+            track.append(f'<span class="ln-mark{edge(pct(m["ts"]))}" style="left:{pct(m["ts"]):.2f}%" '
+                         f'title="{e(m.get("title", ""))}"><em>{e(m.get("label", ""))}</em></span>')
+        marked = " has-marks" if ln.get("marks") else ""
+        rows.append(f'<div class="lane {fig_role(ln.get("role"))}{marked}"><div class="ln-label"><b>{e(ln.get("label"))}</b>'
+                    f'<span>{e(ln.get("sub", ""))}</span></div><div class="ln-track">{"".join(track)}</div></div>')
+    tk = f.get("ticks") or []
+    minor = lambda i: " minor" if len(tk) > 4 and i % 2 else ""  # a narrow figure shows every other one  # noqa: E731
+    ticks = "".join(f'<span class="{(edge(pct(t["ts"])) + minor(i)).strip()}" style="left:{pct(t["ts"]):.2f}%">'
+                    f'{e(t["label"])}</span>' for i, t in enumerate(tk))
+    ticks += "".join(f'<span class="ln-rule-label{edge(pct(r["ts"]))}" style="left:{pct(r["ts"]):.2f}%">'
+                     f'{e(r.get("label", ""))}</span>' for r in f.get("rules") or [])
+    return f'<div class="lanes">{"".join(rows)}<div class="lane ln-axis"><div></div><div class="ln-track">{ticks}</div></div></div>'
+
+
+def fig_split(f: dict) -> str:
+    out = []
+    for row in f.get("rows") or []:
+        parts = row.get("parts") or []
+        total = sum(float(p["value"]) for p in parts) or 1.0
+        unit = row.get("unit", "")
+        fmt = lambda v: (f"{v:g}" if float(v) == int(float(v)) else f"{float(v):,.2f}") + unit  # noqa: E731
+        segs = "".join(f'<span class="sp-seg {fig_role(p.get("role"))}{" narrow" if float(p["value"]) / total < .12 else ""}" '
+                       f'style="width:{float(p["value"]) / total * 100:.2f}%" title="{e(p.get("label"))}: {e(fmt(p["value"]))}">'
+                       f'<b>{e(fmt(p["value"]))}</b></span>' for p in parts)
+        key = "".join(f'<li class="{fig_role(p.get("role"))}"><i></i>{e(p.get("label"))} <b>{e(fmt(p["value"]))}</b>'
+                      + (f' <span class="muted">{e(p["note"])}</span>' if p.get("note") else "") + "</li>" for p in parts)
+        out.append(f'<div class="sp-row"><p class="sp-label">{e(row.get("label"))}</p><div class="sp-bar">{segs}</div>'
+                   f'<ul class="sp-key">{key}</ul></div>')
+    for n in f.get("notes") or []:  # a before/after: "Stake lock: 10 days after launch → none"
+        out.append(f'<p class="fig-change"><b>{e(n.get("k"))}</b> <s>{e(n.get("was"))}</s> <span aria-hidden="true">→</span> '
+                   f'<strong>{e(n.get("now"))}</strong></p>')
+    return "".join(out)
+
+
+def fig_flow(f: dict) -> str:
+    out = []
+    for st in f.get("steps") or []:
+        if "arrow" in st:
+            out.append(f'<div class="fl-arrow"><span>{e(st["arrow"])}</span></div>')
+            continue
+        nodes = "".join(f'<div class="fl-node {fig_role(n.get("role"))}{" guess" if n.get("inferred") else ""}">'
+                        f'<b>{e(n.get("label"))}</b>' + (f'<span>{e(n["sub"])}</span>' if n.get("sub") else "")
+                        + (f'<em>{e(n["tag"])}</em>' if n.get("tag") else "") + "</div>" for n in st.get("nodes") or [])
+        out.append(f'<div class="fl-col">{nodes}</div>')
+    return f'<div class="flow">{"".join(out)}</div>'
+
+
+FIGS = {"lanes": fig_lanes, "split": fig_split, "flow": fig_flow}
+
+
+def case_fig(f) -> str:
+    """A finding's figure, or nothing when it's missing, malformed or of a kind this build doesn't know: a figure never
+    stops the page (or the site) from building."""
+    if not isinstance(f, dict) or f.get("type") not in FIGS:
+        return ""
+    try:
+        body = FIGS[f["type"]](f)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return ""
+    cap = f'<figcaption>{e(f["caption"])}</figcaption>' if f.get("caption") else ""
+    return f'<figure class="fig fig-{f["type"]}">{body}{cap}</figure>'
+
+
 def case_page(c: dict, feed: dict) -> str:
     now, up = feed["generated_at"], "../"
     by = {t["token"]: t for t in feed["tokens"]}
@@ -1625,7 +1716,7 @@ def case_page(c: dict, feed: dict) -> str:
              if c.get("status") != "published" else "")
     tiles = "".join(f"<div><dd>{e(v)}</dd><dt>{e(k)}</dt></div>" for v, k in c.get("tiles") or [])
     findings = "".join(
-        f'<li><h3>{e(f.get("h"))}</h3><p>{e(f.get("p"))}</p>'
+        f'<li><h3>{e(f.get("h"))}</h3>{case_fig(f.get("fig"))}<p>{e(f.get("p"))}</p>'
         + (f'<p class="rc">{"".join(case_link(lb, u, up) for lb, u in f["receipts"])}</p>' if f.get("receipts") else "")
         + "</li>" for f in c.get("findings") or [])
     parts = [f"""<section class="casehead"><p class="eyebrow">{case_no(c)} · {case_date(c.get("date"))}
@@ -2029,6 +2120,54 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .findings>li::before{content:counter(f,decimal-leading-zero);position:absolute;left:18px;top:17px;font:700 15px var(--mono);color:var(--accent)}
 .findings h3{font-size:18px}.findings p{margin:8px 0 0;color:var(--ink-2);max-width:78ch}
 .findings .rc{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13.5px}
+.fig{margin:12px 0 4px;padding:14px 16px 12px;background:var(--sheet-2);border:1px solid var(--rule);border-radius:10px;max-width:78ch;min-width:0;container-type:inline-size}
+.fig figcaption{margin-top:10px;font-size:12.5px;color:var(--muted)}
+.r-x{--c:var(--accent)}.r-y{--c:var(--warn)}.r-z{--c:var(--ink-2)}.r-bad{--c:var(--bad)}.r-ok{--c:var(--ok)}.r-hi{--c:var(--accent)}
+.r-mid{--c:var(--ink-2)}.r-lo{--c:var(--muted)}
+.lanes{display:grid;gap:9px}
+.lane{display:grid;grid-template-columns:minmax(0,11.5rem) minmax(0,1fr);gap:3px 14px;align-items:center}
+.lane.has-marks{padding-top:14px}
+.ln-label{display:flex;flex-direction:column;line-height:1.25;min-width:0}
+.ln-label b{font:600 13.5px var(--sans);color:var(--c)}.ln-label span{font-size:12px;color:var(--muted)}
+.ln-track{position:relative;height:26px;border-radius:6px;background:var(--sheet);border:1px solid var(--rule)}
+.ln-span{position:absolute;top:4px;bottom:4px;border-radius:4px;background:var(--c);color:var(--sheet);font:600 11px/16px var(--mono);overflow:hidden;white-space:nowrap;padding:0 6px}
+.ln-pt{position:absolute;top:50%;width:calc(5px + var(--s)*15px);height:calc(5px + var(--s)*15px);border-radius:50%;background:var(--c);opacity:.72;transform:translate(-50%,-50%);box-shadow:0 0 0 1px var(--sheet)}
+.ln-mark{position:absolute;top:-3px;bottom:-3px;width:0;border-left:2px solid var(--bad)}
+.ln-mark em{position:absolute;bottom:100%;left:0;transform:translateX(-50%);font:600 10.5px var(--mono);font-style:normal;color:var(--bad);white-space:nowrap}
+.ln-rule{position:absolute;top:-6px;bottom:-6px;border-left:2px dashed var(--ink-2);opacity:.55}
+.ln-axis .ln-track{height:34px;background:none;border:0}
+.ln-axis .ln-track span{position:absolute;top:0;transform:translateX(-50%);font:11px var(--mono);color:var(--muted);white-space:nowrap}
+.ln-axis .ln-track span.ln-rule-label{top:16px;transform:translateX(-100%);padding-right:6px;color:var(--ink-2);font-weight:600}
+.ln-axis .ln-track span.at-start,.ln-mark.at-start em{transform:none}.ln-axis .ln-track span.at-end,.ln-mark.at-end em{transform:translateX(-100%)}
+.sp-row+.sp-row{margin-top:14px}
+.sp-label{margin:0 0 6px;font:600 13.5px var(--sans);color:var(--ink)}
+.sp-bar{display:flex;gap:2px;height:30px;border-radius:7px;overflow:hidden}
+.sp-seg{background:var(--c);display:flex;align-items:center;justify-content:center;min-width:3px}
+.sp-seg b{font:600 12px var(--mono);color:var(--sheet);white-space:nowrap}.sp-seg.narrow b{display:none}
+.sp-key{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;color:var(--ink-2)}
+.sp-key li{display:inline-flex;align-items:center;gap:6px}.sp-key b{color:var(--ink)}
+.sp-key i{width:10px;height:10px;border-radius:3px;background:var(--c);flex:none}
+.fig-change{margin:12px 0 0;font-size:13.5px;color:var(--ink-2)}.fig-change s{color:var(--muted)}.fig-change strong{color:var(--bad)}
+.flow{display:flex;align-items:stretch}
+.fl-col{display:flex;flex-direction:column;gap:8px;justify-content:center;flex:1 1 0;min-width:0}
+.fl-node{background:var(--sheet);border:1px solid var(--rule);border-left:4px solid var(--c);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.fl-node b{font:600 13.5px/1.3 var(--sans);color:var(--ink);overflow-wrap:anywhere}
+.fl-node span{font-size:12px;line-height:1.35;color:var(--ink-2)}
+.fl-node em{font:600 10.5px var(--mono);font-style:normal;text-transform:uppercase;letter-spacing:.06em;color:var(--c)}
+.fl-node.guess{border-style:dashed;border-left-style:solid}
+.fl-arrow{flex:0 0 92px;position:relative;display:flex;align-items:center;justify-content:center}
+.fl-arrow::after{content:"";position:absolute;left:6px;right:10px;top:50%;border-top:2px solid var(--rule-2)}
+.fl-arrow::before{content:"";position:absolute;right:4px;top:calc(50% - 5px);border:6px solid transparent;border-left:8px solid var(--rule-2);border-right:0}
+.fl-arrow span{position:absolute;left:2px;right:8px;bottom:calc(50% + 5px);font:600 11px/1.25 var(--mono);color:var(--ink-2);text-align:center}
+@container (max-width:560px){.lane{grid-template-columns:minmax(0,1fr)}.ln-axis>div:first-child{display:none}
+.ln-axis .ln-track span.minor{display:none}
+.lane.has-marks{padding-top:0;padding-bottom:14px}.ln-mark em{bottom:auto;top:100%}
+.ln-label{flex-direction:row;flex-wrap:wrap;gap:0 8px;align-items:baseline}}
+@container (max-width:720px){.flow{flex-direction:column}.fl-col{flex-direction:row;flex-wrap:wrap}.fl-col>.fl-node{flex:1 1 12rem}
+.fl-arrow{flex:0 0 44px}
+.fl-arrow::after{left:22px;right:auto;top:4px;bottom:10px;border-top:0;border-left:2px solid var(--rule-2)}
+.fl-arrow::before{right:auto;left:17px;top:auto;bottom:2px;border:6px solid transparent;border-top:8px solid var(--rule-2);border-bottom:0}
+.fl-arrow span{left:36px;right:0;bottom:auto;top:50%;transform:translateY(-50%);text-align:left}}
 .beads{list-style:none;margin:16px 0 0;padding:0;display:flex;flex-wrap:wrap;row-gap:16px}
 .beads li{display:flex;align-items:flex-start}
 .beads li+li::before{content:"";flex:none;width:10px;height:2px;margin-top:12px;background:var(--rule-2)}
