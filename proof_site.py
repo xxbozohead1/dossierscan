@@ -1726,8 +1726,9 @@ Short keys, to keep it small.</td></tr></tbody></table></div>
 <code>verdict.receipts</code> links the post or page it rests on.</li>
 <li><code>related.claimed</code> lists the tokens the same X account or site claims: for an impersonator, that's the real token.
 <code>related.impersonators</code> lists the fakes around a real one.</li>
-<li><code>market</code> and <code>treasury</code> come from Orbio's public API (Orbio agents only): price, market cap, curve progress,
-stake, CREDIT and the agent's spendable balance.</li>
+<li><code>market</code> and <code>treasury</code> come from Orbio's public API (Orbio agents only): price, market cap,
+stake, CREDIT and the agent's spendable balance. <code>market.curve_pct</code> is read from the chain: the ORBIO the bonding
+curve holds, as a share of the amount it graduates at.</li>
 <li><code>timeline.verified_at</code> is when {NAME} first saw an official channel claim the token.</li>
 <li><code>status</code> is <code>PROVEN</code>, <code>LIVE</code>, <code>BUILDING</code>, <code>UNPROVEN</code>, <code>ABANDONED</code> or
 <code>SCAM</code> (<a href="method.html#5-status">rules</a>). <code>facts[]</code> are the score lines.</li></ul>
