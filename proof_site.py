@@ -2243,10 +2243,11 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .cf-doc h2{margin:2px 0 0;font:800 clamp(22px,2.6vw,28px)/1.08 var(--display);color:var(--ink)}
 .cf-paper>*{flex-shrink:0}
 .cf-dek{margin:0;font-size:14px;line-height:1.5;color:var(--ink-2);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:5;overflow:hidden}
-.cf-tiles{display:flex;flex-wrap:wrap;gap:6px 18px;margin:4px 0 0}.cf-tiles div{display:flex;flex-direction:column-reverse}
-.cf-tiles dd{margin:0;font:700 24px/1.1 var(--mono);color:var(--ink);white-space:nowrap}.cf-tiles dt{font-size:11.5px;color:var(--ink-2)}
+.cf-tiles{display:flex;gap:18px;margin:4px 0 0}.cf-tiles div{display:flex;flex-direction:column-reverse;min-width:0}
+.cf-tiles dd{margin:0;font:700 24px/1.1 var(--mono);color:var(--ink)}.cf-tiles dt{font-size:11.5px;color:var(--ink-2)}
 /* a page's height is fixed: the exhibit gives way, so the link to the file always shows */
-.cf-exhibit{margin-top:4px;padding:10px 12px;border:1px dashed var(--rule-p);border-radius:4px;background:rgba(255,255,255,.4);flex-shrink:1;min-height:0;overflow:hidden}
+.cf-exhibit{margin-top:4px;padding:10px 12px;border:1px dashed var(--rule-p);border-radius:4px;background:rgba(255,255,255,.4);flex-shrink:1;min-height:0;overflow:hidden;
+  -webkit-mask-image:linear-gradient(#000 calc(100% - 16px),transparent);mask-image:linear-gradient(#000 calc(100% - 16px),transparent)}
 .cf-exhibit .cf-k{margin-bottom:8px;font-size:10px}
 .cf-dots{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px}
 .cf-dots li{width:10px;height:10px;border-radius:50%;background:var(--st);box-shadow:inset 0 0 0 1px rgba(0,0,0,.15)}
@@ -2277,7 +2278,8 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .cf-controls button{font:700 13px var(--mono);letter-spacing:.06em;padding:9px 16px;border-radius:999px;border:1px solid var(--rule-2);
   background:var(--sheet);color:var(--ink);cursor:pointer}.cf-controls button:disabled{opacity:.35;cursor:default}
 .cf-count{font:600 12.5px var(--mono);color:var(--muted);min-width:150px;text-align:center}
-@media (max-width:760px){.casefolder{--pw:min(430px,calc(100vw - 32px))}.cf-tiles{gap:12px}.cf-tiles dd{font-size:19px}.cf-tiles dt{font-size:11px}}
+@media (max-width:760px){.casefolder{--pw:min(430px,calc(100vw - 32px))}.cf-tiles{gap:12px}.cf-tiles dd{font-size:19px}.cf-tiles dt{font-size:11px}
+.cf-dek{-webkit-line-clamp:3}.cf-dots{gap:3px}.cf-dots li{width:8px;height:8px}}
 @media (prefers-reduced-motion:reduce){.casefolder{--turn:0s}}
 .crumb{margin:0 0 6px;font-weight:600}
 .file{position:relative;background:var(--sheet);border:1px solid var(--rule);border-radius:0 14px 14px 14px;padding:22px 22px 20px;margin-top:18px}
