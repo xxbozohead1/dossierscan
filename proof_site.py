@@ -70,7 +70,8 @@ LINES = {
 FLAGS = {"CREATOR_EXIT": "Creator sold most of their launch buy", "FEE_REDIRECT": "Creator fees sent to a fresh wallet",
          "LAUNCH_BUNDLE": "Several buyers in the launch block", "SERIAL": "Creator launched 3+ tokens in a day",
          "CONFLICT": "Official channels disagree", "BORROWED": "Points at another organisation's brand",
-         "COPIER_CREATOR": "Launched by a wallet that also launched 3+ confirmed copies of other projects"}
+         "COPIER_CREATOR": "Launched by a wallet that also launched 3+ confirmed copies of other projects",
+         "PRINCIPAL_WITHDRAWN": "The owner took ORBIO out of the agent's stake"}
 FONTS = ("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,500..800"
          "&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400..700&display=swap")
 EXPLORER = "https://robin.etherscan.io"
@@ -249,7 +250,7 @@ FAVICON = "data:image/svg+xml," + urllib.parse.quote(
     "stroke-linecap='round' stroke-linejoin='round'/></g></svg>", safe=":/=' ")
 LOGO = ROOT / "static" / "logo.png"  # the full seal, 512x512: the $DOSSIER page and the home-screen icon
 NAV = (("index.html#live", "New launches"), ("index.html#board", "Board"), ("scams.html", "Impersonators"),
-       ("token.html", "$DOSSIER"), ("method.html", "Method"), ("api.html", "API"))
+       ("apps.html", "Apps"), ("token.html", "$DOSSIER"), ("method.html", "Method"), ("api.html", "API"))
 
 
 # dark is the default; the switch keeps a viewer's choice of light in this browser. THEME_BOOT sits in <head> and applies
@@ -546,6 +547,14 @@ def map_notes(t: dict, now: int) -> list[list[str]]:
         sh = top10["top10_share"]
         rest.append(["ok" if sh < .3 else "warn" if sh < .5 else "bad",
                      f"Top 10 holders own {sh:.0%}" if sh >= .01 else "Top 10 holders own under 1%"])
+    o = t.get("owner") or {}
+    st = o.get("stake") or {}
+    if (st.get("withdrawn") or 0) > 0:
+        rest.append(["warn" if st.get("staked_ever") and st["withdrawn"] < .5 * st["staked_ever"] else "bad",
+                     "Owner took stake out"])
+    tax = o.get("creator_tax_bps")
+    if tax:
+        rest.append(["bad" if tax >= 500 else "warn", f"{tax_text(tax)} extra creator fee on every trade"])
     rest += [["bad", FLAGS[f]] for f in t.get("flags") or [] if f in FLAGS and f not in COVERED_FLAGS]
     rest.sort(key=lambda n: ("bad", "warn", "ok").index(n[0]))  # stable: equal ones keep the order above
     return (head + rest)[:4]
@@ -836,7 +845,7 @@ DIM_ASK = {"product": "Does something exist, and does it work?", "build": "Is co
            "team": "Is someone accountable?", "work": "Is it doing anything?", "integrity": "Is the token itself sound?"}
 CAUTION = {"CREATOR_EXIT": "Creator sold", "FEE_REDIRECT": "Fees redirected", "LAUNCH_BUNDLE": "Bundled launch",
            "SERIAL": "Serial launcher", "CONFLICT": "Channels disagree", "BORROWED": "Borrowed brand",
-           "COPIER_CREATOR": "Copier's wallet"}
+           "COPIER_CREATOR": "Copier's wallet", "PRINCIPAL_WITHDRAWN": "Stake withdrawn"}
 ICON = {
     "proven": '<circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4.9 8.2l2.1 2.1 4.2-4.5" fill="none" '
               'stroke="var(--sheet)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
@@ -1124,6 +1133,7 @@ def token_page(t: dict, feed: dict) -> str:
 {verdict_block(t, s)}
 <div class="cols">{project_block(t, s)}{score_block(t)}</div>
 {trader_block(t, now)}
+{apps_block(t, feed)}
 {treasury_block(t) if tr else ""}
 {identities(t)}
 {evidence(t) if t.get("facts") else ""}
@@ -1232,7 +1242,7 @@ def ordinal(n: int) -> str:
     return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
 
 
-COVERED_FLAGS = {"LAUNCH_BUNDLE", "CREATOR_EXIT", "SERIAL"}  # the trader's card says these in its own words
+COVERED_FLAGS = {"LAUNCH_BUNDLE", "CREATOR_EXIT", "SERIAL", "PRINCIPAL_WITHDRAWN"}  # the trader's card says these itself
 
 
 def trader_rows(t: dict, now: int) -> list[tuple[str, str, str]]:
@@ -1299,8 +1309,149 @@ def trader_rows(t: dict, now: int) -> list[tuple[str, str, str]]:
         label = {"30m": "30 min", "6h": "6 h", "24h": "a day", "7d": "a week"}
         rows.append(("Holders", "ok" if grew else "warn",
                      "Real holders: " + ", ".join(f"{v} after {label[k]}" for k, v in h)))
+    rows += [("Owner and fees", c, txt) for c, txt in owner_rows(t)]
     rows += [("Warnings", "bad", e(FLAGS[f])) for f in t.get("flags") or [] if f in FLAGS and f not in COVERED_FLAGS]
     return rows
+
+
+def tax_text(bps: int) -> str:
+    return f"{bps / 100:g}%"
+
+
+def owner_rows(t: dict) -> list[tuple[str, str]]:
+    """(ok|warn|bad, html) for the owner and fees group: the creator fee every trade pays, and for an Orbio agent the
+    stake its owner took out, the agent wallet's changes and the CREDIT its fees minted against what it put to work."""
+    o, rows = t.get("owner") or {}, []
+    tax = o.get("creator_tax_bps")
+    if tax is not None:
+        rows.append(("ok" if not tax else "warn" if tax < 500 else "bad",
+                     "No extra creator fee: a trade pays only Pons’s 1%" if not tax else
+                     f"Extra creator fee of {tax_text(tax)} on every buy and sell, on top of Pons’s 1%. It was fixed at "
+                     "launch and goes into the agent’s fees" if t.get("orbio_agent") else
+                     f"Extra creator fee of {tax_text(tax)} on every buy and sell, on top of Pons’s 1%, fixed at launch"))
+    st = o.get("stake") or {}
+    took, ever = st.get("withdrawn") or 0, st.get("staked_ever")
+    launched = t.get("launched_at") or 0
+    if took > 0:
+        share = took / ever if ever else None
+        first = st.get("first") or {}
+        when_ = (f", first {when(first['at'])} ({fmt_span(first['at'] - launched)} after launch)"
+                 if first.get("at") and launched else "")
+        rows.append(("bad" if share is None or share >= .5 else "warn",
+                     f"The owner took {num(took)} ORBIO out of the agent’s stake"
+                     + (f", {share:.0%} of everything staked" if share is not None else "") + when_
+                     + (f", in {st['exits']} withdrawals" if (st.get("exits") or 0) > 1 else "")
+                     + (f". It holds {num(st['holds'])} ORBIO again from later fees" if (st.get("holds") or 0) >= 1 else "")))
+    elif t.get("orbio_agent") and ever:
+        rows.append(("ok", f"The owner hasn’t taken any of the agent’s stake ({num(ever)} ORBIO)"))
+    ch = o.get("wallet_changes") or []
+    if ch:
+        rows.append(("warn", f"The owner changed the agent wallet {'once' if len(ch) == 1 else f'{len(ch)} times'}, "
+                             f"last {when(ch[-1]['at'])}: it’s now {link(EXPLORER + '/address/' + ch[-1]['addr'], short(ch[-1]['addr']))}"))
+    cr = o.get("credit") or {}
+    if cr.get("minted"):
+        m, used, held = cr["minted"], cr.get("activated") or 0, cr.get("held")
+        rows.append(("ok" if used >= .1 * m else "warn",
+                     f"Its fees minted {num(m)} CREDIT to the agent wallet since 1 Oct; it put {num(used) if used else 'none'} "
+                     f"to work" + (f" ({used / m:.0%})" if used else "")
+                     + (f", and holds {num(held)}" if held is not None else "")))
+    return rows
+
+
+# ----------------------------------------------------------------- Sign in with Orbio apps
+
+APP_FEE_HIGH = 1000  # bps
+SCOPE_TEXT = {"balance": "see your balance and usage", "wallet": "see your wallet address", "email": "see your email address"}
+APP_STATUS = {"official": "Official", "impersonator": "Impersonator's", "unverified": "Unverified"}
+
+
+def app_lines(a: dict, by: dict, up: str = "") -> list[tuple[str, str]]:
+    """(ok|warn|bad, html) facts about one app, for its entry on a token's file and on the apps page."""
+    host = e(a.get("redirect_host") or "an address Orbio didn't show")
+    toks = [by.get(x) or {"token": x, "symbol": None, "name": None} for x in a.get("tokens") or []]
+    refs = ", ".join(tref(t, up, "tok inline") for t in toks[:3])
+    rows: list[tuple[str, str]] = []
+    if a.get("state") == "deleted":
+        rows.append(("warn", "Orbio says this app no longer exists"))
+    if a["status"] == "official":
+        rows.append(("ok", f"Signs people in to <b>{host}</b>, a site the project behind {refs} vouches for"))
+    elif a["status"] == "impersonator":
+        rows.append(("bad", f"Sends people back to <b>{host}</b>, a site that presents the impersonator {refs}"))
+    else:
+        rows.append(("warn", f"Sends people back to <b>{host}</b>. Nothing ties that site to a verified project yet"))
+    like = [by[x] for x in a.get("looks_like") or [] if x in by]
+    if like and a["status"] != "official":
+        rows.append(("bad" if a["status"] == "impersonator" else "warn", "Its name matches "
+                     + ", ".join(tref(t, up, "tok inline") for t in like) + ", but nothing ties it to that project yet"))
+    if a.get("homepage_elsewhere"):
+        rows.append(("warn", f"Its homepage is {e(re.sub(r'^https?://(www[.])?', '', a['homepage']).rstrip('/'))}, "
+                             f"but sign-ins go to {host}"))
+    fee = a.get("fee_bps")
+    if fee is not None:
+        rows.append(("ok" if fee == 0 else "bad" if fee >= APP_FEE_HIGH else "warn",
+                     "No app fee" if fee == 0 else f"Adds a {fee / 100:g}% fee to everything it spends from your balance, "
+                                                   "paid to its developer" + (": each request costs you twice what Orbio "
+                                                                              "charges" if fee >= 10000 else "")))
+    fees = a.get("fees") or []
+    if len(fees) > 1:
+        (_, was), (at, now_) = fees[-2], fees[-1]
+        rows.append(("bad" if now_ > was else "ok", f"Fee changed from {was / 100:g}% to {now_ / 100:g}% {when(at)}"))
+    scopes = set(a.get("scopes") or [])
+    if "social" in scopes:
+        rows.append(("bad", "Asks to post to X as you"))
+    spend = [w for s, w in (("inference", "AI models"), ("tools", "Orbio’s tools (X search, web pages and more)")) if s in scopes]
+    can = ([f"spend your Orbio balance on {' and '.join(spend)}"] if spend else []) + [
+        SCOPE_TEXT[s] for s in ("balance", "wallet", "email") if s in scopes]
+    if can:
+        rows.append(("ok", "Asks to " + (", ".join(can[:-1]) + " and " + can[-1] if len(can) > 1 else can[0])))
+    if a.get("registered") is False:
+        rows.append(("warn", "Registered itself, not through a developer's Orbio account"))
+    return rows
+
+
+def app_card(a: dict, by: dict, up: str = "", own: bool = False, seen: bool = False) -> str:
+    st = a["status"] if a.get("state") != "deleted" else "unverified"
+    label = APP_STATUS[a["status"]] + (" app of this token" if own else "")
+    where = ""
+    if seen and a.get("seen_on"):
+        where = ('<p class="muted small">Found on ' + ", ".join(link(s["url"], re.sub(r"^https?://(www[.])?", "", s["url"]).rstrip("/"))
+                                                       for s in a["seen_on"][:4])
+                 + f' · first seen {when(a.get("first_seen"))} · read from Orbio {when(a.get("checked_at"), "not yet")}</p>')
+    return (f'<div class="app a-{st}"><h3>{e(a.get("name") or "An app Orbio hasn’t described yet")} '
+            f'<span class="appst a-{st}">{e(label)}</span></h3><ul class="checks">'
+            + "".join(f'<li class="{c}"><span>{txt}</span></li>' for c, txt in app_lines(a, by, up)) + f"</ul>{where}</div>")
+
+
+APPS_NOTE = ("An app’s name proves nothing: anyone can register one under any name. What counts is the line on Orbio’s "
+             "consent screen that says where it sends you back to, and whether the project vouches for that site.")
+
+
+def apps_block(t: dict, feed: dict) -> str:
+    """A file's Sign in with Orbio apps: those seen on, or returning to, the sites it names."""
+    by_id = {a["client_id"]: a for a in feed.get("apps") or []}
+    mine = [(by_id[m["client_id"]], m["own"]) for m in t.get("apps") or [] if m["client_id"] in by_id]
+    if not mine:
+        return ""
+    by = {x["token"]: x for x in feed["tokens"]}
+    cards = "".join(app_card(a, by, "../", own) for a, own in sorted(mine, key=lambda x: not x[1]))
+    return (f'<section class="apps"><h2>Sign in with Orbio</h2><p class="muted">Apps the sites on this file send people '
+            f'to, as Orbio’s own consent page describes them.</p>{cards}<p class="muted small">{APPS_NOTE} '
+            f'<a href="../apps.html">Every app on file →</a></p></section>')
+
+
+def apps_page(feed: dict) -> str:
+    apps = sorted(feed.get("apps") or [], key=lambda a: ({"impersonator": 0, "unverified": 1, "official": 2}[a["status"]],
+                                                          -(a.get("first_seen") or 0)))
+    by = {x["token"]: x for x in feed["tokens"]}
+    n = {s: sum(1 for a in apps if a["status"] == s) for s in APP_STATUS}
+    body = "".join(app_card(a, by, "", seen=True) for a in apps) or '<p class="muted">No apps found yet.</p>'
+    return f"""<section class="page-head"><h1>Sign in with Orbio apps</h1><p class="sub">Since 1 October a project on Orbio can let
+you sign in with your Orbio account. An app you connect can spend your Orbio balance, some ask to post to X as you, and its
+developer can add a fee of up to 100% on top of everything it spends. {NAME} finds the apps on the sites Orbio agents point
+to and reads what Orbio’s consent page says about each, every day: {plural(len(apps), "app")} on file, {n["official"]} official,
+{n["unverified"]} unverified, {n["impersonator"]} from impersonators.</p></section>
+<div class="apps applist">{body}</div><p class="muted small">{APPS_NOTE} Before you approve one, check the “sends you back to”
+line against the project’s own site, and the fee.</p>"""
 
 
 def trader_block(t: dict, now: int) -> str:
@@ -1310,7 +1461,9 @@ def trader_block(t: dict, now: int) -> str:
     groups: dict[str, list] = {}
     for g, c, txt in rows:
         groups.setdefault(g, []).append((c, txt))
-    body = "".join(f'<h3>{e(g)}</h3><ul class="checks">' + "".join(f'<li class="{c}">{txt}</li>' for c, txt in items) + "</ul>"
+    # one span a row: the row is a flex line (its dot, then the text), and a link or a time in the text would otherwise
+    # become a column of its own
+    body = "".join(f'<h3>{e(g)}</h3><ul class="checks">' + "".join(f'<li class="{c}"><span>{txt}</span></li>' for c, txt in items) + "</ul>"
                    + (lineup(t) if g == "Original or copy" else "") for g, items in groups.items())
     return (f'<section class="safety trader"><h2>Trader’s card</h2>{body}<p class="muted small">From the chain alone: '
             "holder counts are real end buyers, not routers or bots, and bots are wallets that buy 10 or more launches a day."
@@ -1828,7 +1981,11 @@ Addresses are lowercase.</td></tr>
 Orbio agent id, verdict and status.</td></tr>
 <tr><td><a href="api/v1/live.json"><code>api/v1/live.json</code></a></td><td>The numbers that move, for every token, refreshed every minute:
 market cap, price, curve, 24h volume and trades, holders, change and a sparkline, the agent's treasury, and its current verdict.
-Short keys, to keep it small.</td></tr></tbody></table></div>
+Short keys, to keep it small.</td></tr>
+<tr><td><a href="api/v1/apps.json"><code>api/v1/apps.json</code></a></td><td>Every Sign in with Orbio app found on the sites Orbio
+agents point to: what Orbio's consent page says about it (name, the host it sends people back to, fee and its changes), the
+scopes it asks for, where it was seen, and <code>status</code>: <code>official</code>, <code>unverified</code> or
+<code>impersonator</code>.</td></tr></tbody></table></div>
 <h2>Fields worth knowing</h2><ul>
 <li><code>verdict.verdict</code> is <code>verified</code>, <code>scam</code> or <code>unverified</code>, and
 <code>verdict.receipts</code> links the post or page it rests on.</li>
@@ -2325,7 +2482,14 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .related{margin-top:16px;padding-top:14px;border-top:1px dashed var(--rule)}.related h3{margin-top:0}
 .related ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}.related.bad h3{color:var(--bad)}
 .cols{display:grid;grid-template-columns:1.25fr 1fr;gap:16px}
-.project,.score,.safety,.treasury{background:var(--sheet);border:1px solid var(--rule);border-radius:14px;padding:20px 22px}
+.project,.score,.safety,.treasury,section.apps{background:var(--sheet);border:1px solid var(--rule);border-radius:14px;padding:20px 22px}
+.apps .app{border-top:1px solid var(--rule);padding:14px 0 2px;min-width:0}.apps .app:first-of-type{border-top:0}
+section.apps>.app:first-of-type{margin-top:4px}.apps .app h3{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0}
+.apps .checks li{overflow-wrap:anywhere}
+.appst{font:600 11.5px/1 var(--mono);letter-spacing:.04em;text-transform:uppercase;padding:5px 8px 4px;border-radius:999px}
+.appst.a-official{color:var(--ok);background:var(--ok-bg)}.appst.a-unverified{color:var(--warn);background:var(--warn-bg)}
+.appst.a-impersonator{color:var(--bad);background:var(--bad-bg)}
+.applist{background:var(--sheet);border:1px solid var(--rule);border-radius:14px;padding:6px 22px 14px;margin:16px 0}
 .claim{font-size:16.5px;line-height:1.5;margin:12px 0 4px}
 .desc{margin:14px 0 4px;padding:0 0 0 14px;border-left:2px solid var(--rule-2);color:var(--ink-2);font-style:italic;overflow-wrap:anywhere}
 .xcard{margin-top:14px;padding:12px 14px;border:1px solid var(--rule);border-radius:10px;background:var(--sheet-2)}
@@ -2543,7 +2707,8 @@ th[data-sort] button{padding:8px 0}
 .list th,.list td{padding:10px 8px}.list .chip{font-size:10px;padding:3px 7px;letter-spacing:.03em}.list .status{font-size:10px;padding:2px 6px}.notfound .more a{display:inline-block;padding:8px 2px}.list th.num,.list td.num{padding-right:2px}
 }
 @media (max-width:560px){.keynums{grid-template-columns:repeat(2,minmax(0,1fr))}.hide-sm{display:none}.stampbox{flex-direction:row;padding:0}
-.stamp.big{font-size:20px;padding:11px 16px 9px}.verdict .why{font-size:17px}.file{padding:18px 16px}.verdict,.project,.score,.safety,.treasury,.evidence{padding:16px}
+.stamp.big{font-size:20px;padding:11px 16px 9px}.verdict .why{font-size:17px}.file{padding:18px 16px}.verdict,.project,.score,.safety,.treasury,.evidence,section.apps{padding:16px}
+.applist{padding:4px 16px 12px}
 .tally{gap:10px 24px}.tally dd{font-size:22px}}
 """
 DARK = ("--bg:#090d12;--sheet:#10161f;--sheet-2:#151d28;--ink:#e7ecf3;--ink-2:#b4bfcd;--muted:#8792a4;--rule:#212a36;--rule-2:#324050;"
@@ -3082,7 +3247,8 @@ def list_pages(feed: dict, home_too: bool = True) -> list[tuple[str, str, str]]:
     """(path, title, body) of the pages that list tokens: the home page, every agent, the impersonators."""
     return ([("index.html", f"{NAME}: which Orbio launch is the real one?", home(feed))] if home_too else []) + [
         ("agents.html", f"Every Orbio agent · {NAME}", agents_page(feed)),
-        ("scams.html", f"Impersonators caught · {NAME}", scams_page(feed))]
+        ("scams.html", f"Impersonators caught · {NAME}", scams_page(feed)),
+        ("apps.html", f"Sign in with Orbio apps · {NAME}", apps_page(feed))]
 
 
 def replace_text(path: Path, text: str) -> None:
@@ -3167,7 +3333,7 @@ def build(feed: dict, out: Path = OUT, tick=None) -> int:
     (tmp / "robots.txt").write_text("User-agent: *\nAllow: /\n" + (f"Sitemap: {site}/sitemap.xml\n" if site else ""), "utf-8")
     if site:
         live_cases = [c for c in CASES if c.get("status") == "published"]  # never a draft, even on the dev server
-        pages = ["", "agents.html", "scams.html", "token.html", "method.html", "api.html"] + [f't/{t["token"]}.html' for t in feed["tokens"]] \
+        pages = ["", "agents.html", "scams.html", "apps.html", "token.html", "method.html", "api.html"] + [f't/{t["token"]}.html' for t in feed["tokens"]] \
             + (["cases.html"] + [f'case/{c["slug"]}.html' for c in live_cases] if live_cases else [])
         (tmp / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
                                          + "".join(f"<url><loc>{e(site)}/{p}</loc></url>\n" for p in pages) + "</urlset>\n", "utf-8")
@@ -3182,6 +3348,8 @@ def build(feed: dict, out: Path = OUT, tick=None) -> int:
             (tmp / rel).write_text(token_html(t, feed), "utf-8")
         (tmp / "api" / "v1" / "tokens" / f'{t["token"]}.json').write_text(token_json(t, feed), "utf-8")
     (tmp / "api" / "v1" / "feed.json").write_text(json.dumps(feed, ensure_ascii=False), "utf-8")
+    (tmp / "api" / "v1" / "apps.json").write_text(json.dumps(
+        {"method": feed["method"], "generated_at": feed["generated_at"], "apps": feed.get("apps") or []}, ensure_ascii=False), "utf-8")
     write_live(feed, tmp)
     (tmp / "api" / "v1" / "summary.json").write_text(json.dumps(
         {"method": feed["method"], "generated_at": feed["generated_at"],
