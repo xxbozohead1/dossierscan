@@ -1361,69 +1361,122 @@ def owner_rows(t: dict) -> list[tuple[str, str]]:
 # ----------------------------------------------------------------- Sign in with Orbio apps
 
 APP_FEE_HIGH = 1000  # bps
-SCOPE_TEXT = {"balance": "see your balance and usage", "wallet": "see your wallet address", "email": "see your email address"}
-APP_STATUS = {"official": "Official", "impersonator": "Impersonator's", "unverified": "Unverified"}
 
 
-def app_lines(a: dict, by: dict, up: str = "") -> list[tuple[str, str]]:
-    """(ok|warn|bad, html) facts about one app, for its entry on a token's file and on the apps page."""
-    host = e(a.get("redirect_host") or "an address Orbio didn't show")
-    toks = [by.get(x) or {"token": x, "symbol": None, "name": None} for x in a.get("tokens") or []]
-    refs = ", ".join(tref(t, up, "tok inline") for t in toks[:3])
-    rows: list[tuple[str, str]] = []
-    if a.get("state") == "deleted":
-        rows.append(("warn", "Orbio says this app no longer exists"))
-    if a["status"] == "official":
-        rows.append(("ok", f"Signs people in to <b>{host}</b>, a site the project behind {refs} vouches for"))
-    elif a["status"] == "impersonator":
-        rows.append(("bad", f"Sends people back to <b>{host}</b>, a site that presents the impersonator {refs}"))
-    else:
-        rows.append(("warn", f"Sends people back to <b>{host}</b>. Nothing ties that site to a verified project yet"))
-    like = [by[x] for x in a.get("looks_like") or [] if x in by]
-    if like and a["status"] != "official":
-        rows.append(("bad" if a["status"] == "impersonator" else "warn", "Its name matches "
-                     + ", ".join(tref(t, up, "tok inline") for t in like) + ", but nothing ties it to that project yet"))
-    if a.get("homepage_elsewhere"):
-        rows.append(("warn", f"Its homepage is {e(re.sub(r'^https?://(www[.])?', '', a['homepage']).rstrip('/'))}, "
-                             f"but sign-ins go to {host}"))
+APP_STAMP = {"official": ("Official", "verified"), "unverified": ("Unverified", "unverified"),
+             "impersonator": ("Impersonator’s", "scam")}
+
+
+def svg(paths: str) -> str:
+    return (f'<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" '
+            f'stroke-linecap="round" stroke-linejoin="round">{paths}</svg>')
+
+
+# what an app can ask for, in the order every pass shows them: lit when it asks, dimmed when it doesn't
+PERMS = (("inference", "AI models", "Spends your Orbio balance on AI models",
+          svg('<path d="M8 1.8l1.5 4.1 4.2 1.5-4.2 1.5L8 13.1 6.5 8.9 2.3 7.4l4.2-1.5z"/>')),
+         ("tools", "Orbio tools", "Spends your Orbio balance on Orbio’s tools: X search, web pages and more",
+          svg('<circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2l3.6 3.6"/>')),
+         ("social", "Posts to X", "Posts to X as you, from your account",
+          svg('<path d="M2.2 7.6l11.6-5.4-4.4 11.6-2.2-4.9z"/><path d="M7.2 8.9l6.6-6.7"/>')),
+         ("balance", "Your balance", "Sees your Orbio balance and usage",
+          svg('<ellipse cx="8" cy="4.6" rx="5.2" ry="2.1"/><path d="M2.8 4.6v6.8c0 1.2 2.3 2.1 5.2 2.1s5.2-.9 5.2-2.1V4.6"/>'
+              '<path d="M2.8 8c0 1.2 2.3 2.1 5.2 2.1s5.2-.9 5.2-2.1"/>')),
+         ("wallet", "Your wallet", "Sees the wallet address you sign in with",
+          svg('<rect x="1.8" y="4" width="12.4" height="9" rx="2"/><path d="M4.5 4V3.2c0-.7.6-1.2 1.3-1l6 1.8"/><circle cx="11" cy="8.5" r=".9" fill="currentColor"/>')),
+         ("email", "Your email", "Sees your email address",
+          svg('<rect x="1.8" y="3.4" width="12.4" height="9.2" rx="1.8"/><path d="M2.4 4.2L8 8.6l5.6-4.4"/>')))
+ICON_RETURN = svg('<path d="M6 3.5L2.5 7 6 10.5"/><path d="M2.8 7h7.4a3.3 3.3 0 0 1 0 6.6H8.5"/>')
+
+
+def bare(url: str) -> str:
+    return re.sub(r"^https?://(www[.])?", "", url or "").rstrip("/")
+
+
+def money(x: float, places: int = 2) -> str:
+    return f"${x:,.{places}f}"
+
+
+def fee_stub(a: dict) -> str:
+    """The pass's tear-off: the app fee large, a meter from 0 to 100%, and what $1 of Orbio's price costs with it."""
     fee = a.get("fee_bps")
-    if fee is not None:
-        rows.append(("ok" if fee == 0 else "bad" if fee >= APP_FEE_HIGH else "warn",
-                     "No app fee" if fee == 0 else f"Adds a {fee / 100:g}% fee to everything it spends from your balance, "
-                                                   "paid to its developer" + (": each request costs you twice what Orbio "
-                                                                              "charges" if fee >= 10000 else "")))
+    if fee is None:
+        return ('<aside class="stub f-none"><span class="lbl">App fee</span><b class="fee">—</b>'
+                '<small>Not read from Orbio yet</small></aside>')
+    lvl = "ok" if fee == 0 else "bad" if fee >= APP_FEE_HIGH else "warn"
+    add = fee / 10_000
+    places = 2 if fee % 100 == 0 else 3 if fee % 10 == 0 else 4  # a 0.2% fee is $0.002 on $1, not $0.00
+    changed = ""
     fees = a.get("fees") or []
     if len(fees) > 1:
         (_, was), (at, now_) = fees[-2], fees[-1]
-        rows.append(("bad" if now_ > was else "ok", f"Fee changed from {was / 100:g}% to {now_ / 100:g}% {when(at)}"))
+        changed = f'<small class="was {"up" if now_ > was else "down"}">Was {was / 100:g}% until {when(at)}</small>'
+    return (f'<aside class="stub f-{lvl}"><span class="lbl">App fee</span><b class="fee">{"None" if not fee else f"{fee / 100:g}%"}</b>'
+            f'<small>{"Orbio’s price, nothing added" if not fee else "on top of everything it spends, to its developer"}</small>'
+            f'<span class="fee-meter" title="0 to 100%"><span style="width:{min(100, max(2, fee / 100)) if fee else 0:.1f}%"></span></span>'
+            f'<dl class="receipt"><div><dt>Orbio charges</dt><dd>{money(1, places)}</dd></div><div><dt>App fee</dt>'
+            f'<dd>+{money(add, places)}</dd></div><div class="tot"><dt>You pay</dt><dd>{money(1 + add, places)}</dd></div></dl>{changed}</aside>')
+
+
+def app_pass(a: dict, by: dict, up: str = "", own: bool = False, seen: bool = True) -> str:
+    """One app as an access pass: who it is and whose, where a sign-in sends you, what it may do, and its fee."""
+    st, dead = a["status"], a.get("state") == "deleted"
+    label, vclass = APP_STAMP[st]
+    name = a.get("name") or "An app Orbio hasn’t described yet"
+    mono = (re.search(r"[A-Za-z0-9]", a.get("name") or "") or ["?"])[0].upper()
+    toks = [by.get(x) or {"token": x, "symbol": None, "name": None} for x in a.get("tokens") or []]
+    refs = ", ".join(tref(t, up, "tok inline") for t in toks[:3])
+    notes = [("ok", f"Its project vouches for this site: {refs}") if st == "official" else
+             ("bad", f"This site presents the impersonator {refs}") if st == "impersonator" else
+             ("warn", "Nothing ties this site to a verified project yet")]
+    like = [by[x] for x in a.get("looks_like") or [] if x in by]
+    if like and st != "official":
+        notes.append(("bad" if st == "impersonator" else "warn",
+                      "Named like " + ", ".join(tref(t, up, "tok inline") for t in like) + ", but not tied to it"))
+    if a.get("homepage_elsewhere"):
+        notes.append(("warn", f"Its homepage is on another site: {e(bare(a['homepage']))}"))
+    if dead:
+        notes.insert(0, ("warn", "Orbio says this app no longer exists"))
     scopes = set(a.get("scopes") or [])
-    if "social" in scopes:
-        rows.append(("bad", "Asks to post to X as you"))
-    spend = [w for s, w in (("inference", "AI models"), ("tools", "Orbio’s tools (X search, web pages and more)")) if s in scopes]
-    can = ([f"spend your Orbio balance on {' and '.join(spend)}"] if spend else []) + [
-        SCOPE_TEXT[s] for s in ("balance", "wallet", "email") if s in scopes]
-    if can:
-        rows.append(("ok", "Asks to " + (", ".join(can[:-1]) + " and " + can[-1] if len(can) > 1 else can[0])))
-    if a.get("registered") is False:
-        rows.append(("warn", "Registered itself, not through a developer's Orbio account"))
-    return rows
+    perms = ("".join(f'<li class="perm{" on" if k in scopes else ""}{" risk" if k == "social" else ""}" title="{e(desc)}">'
+                     f'{icon}<span>{e(lbl)}</span></li>' for k, lbl, desc, icon in PERMS) if scopes else "")
+    who = {True: "Registered by a developer", False: "Registered itself, not by a developer"}.get(a.get("registered"), "")
+    foot = ""
+    if seen:
+        found = ", ".join(link(s["url"], bare(s["url"])) for s in (a.get("seen_on") or [])[:3])
+        foot = (f'<p class="pass-foot">{"Found on " + found + " · " if found else ""}first seen {when(a.get("first_seen"))} · '
+                f'read from Orbio {when(a.get("checked_at"), "not yet")}</p>')
+    return f"""<article class="pass p-{st}{" dead" if dead else ""}"><div class="pass-main">
+<header class="pass-head"><span class="mono-tile" aria-hidden="true">{e(mono)}</span><div class="pass-id"><h3>{e(name)}</h3>
+<span class="cid" title="{e(a["client_id"])}">{e(a["client_id"][:14])}…{" · " + e(who) if who else ""}</span></div>
+<span class="stamp v-{vclass}">{e("This token’s app" if own else label)}</span></header>
+<div class="ret">{ICON_RETURN}<span class="lbl">Sends you back to</span><code>{e(a.get("redirect_host") or "—")}</code></div>
+<ul class="pass-notes">{"".join(f'<li class="{c}"><span>{txt}</span></li>' for c, txt in notes)}</ul>
+{f'<div class="perm-row"><span class="lbl">Asks to</span><ul class="perms">{perms}</ul></div>' if perms else
+ '<p class="perm-row muted small">Its sign-in link doesn’t say what it asks for.</p>'}{foot}</div>{fee_stub(a)}</article>"""
 
 
-def app_card(a: dict, by: dict, up: str = "", own: bool = False, seen: bool = False) -> str:
-    st = a["status"] if a.get("state") != "deleted" else "unverified"
-    label = APP_STATUS[a["status"]] + (" app of this token" if own else "")
-    where = ""
-    if seen and a.get("seen_on"):
-        where = ('<p class="muted small">Found on ' + ", ".join(link(s["url"], re.sub(r"^https?://(www[.])?", "", s["url"]).rstrip("/"))
-                                                       for s in a["seen_on"][:4])
-                 + f' · first seen {when(a.get("first_seen"))} · read from Orbio {when(a.get("checked_at"), "not yet")}</p>')
-    return (f'<div class="app a-{st}"><h3>{e(a.get("name") or "An app Orbio hasn’t described yet")} '
-            f'<span class="appst a-{st}">{e(label)}</span></h3><ul class="checks">'
-            + "".join(f'<li class="{c}"><span>{txt}</span></li>' for c, txt in app_lines(a, by, up)) + f"</ul>{where}</div>")
-
-
-APPS_NOTE = ("An app’s name proves nothing: anyone can register one under any name. What counts is the line on Orbio’s "
-             "consent screen that says where it sends you back to, and whether the project vouches for that site.")
+def consent_guide(apps: list[dict]) -> str:
+    """How to read Orbio's consent screen: a simplified one, drawn from an app on file, with the three things to check."""
+    ex = next((a for a in apps if a["status"] == "official" and a.get("name") and a.get("fee_bps") is not None), None) \
+        or next((a for a in apps if a.get("name")), None) or {}
+    name, host = ex.get("name") or "An app", ex.get("redirect_host") or "app.example.xyz"
+    fee = ex.get("fee_bps") if ex.get("fee_bps") is not None else 500
+    scopes = set(ex.get("scopes") or ["inference", "social"])
+    asks = [lbl for k, lbl in (("inference", "Use AI models with your balance"), ("tools", "Use Orbio’s tools with your balance"),
+                               ("social", "Post to X as you"), ("wallet", "See your wallet address")) if k in scopes][:3]
+    return f"""<section class="guide"><figure class="mock" aria-label="A simplified Orbio consent screen">
+<div class="mock-bar"><span></span><span></span><span></span><code>orbio.so/oauth/authorize</code></div>
+<div class="mock-body"><p class="mock-title"><b>{e(name)}</b> wants to use your Orbio account</p>
+<p class="mock-ret">Registered app · sends you back to <mark>{e(host)}</mark><i class="pin">1</i></p>
+<ul class="mock-asks">{"".join(f'<li{" class=risk" if a == "Post to X as you" else ""}>{e(a)}</li>' for a in asks)}<i class="pin">2</i></ul>
+<p class="mock-fee">App fee <b>{fee / 100:g}%</b><i class="pin">3</i></p>
+<div class="mock-btns"><span>Cancel</span><span class="go">Approve</span></div></div>
+<figcaption>Orbio’s consent screen, simplified, for {e(name)}.</figcaption></figure>
+<ol class="checks-3"><li><b>Where it sends you back to.</b> That host is the app. Is it the project’s own site? A name or a logo
+proves nothing: anyone can register an app under any name.</li><li><b>What it may do.</b> Spending your balance is what these apps
+are for. Posting to X as you is a bigger ask.</li><li><b>What it adds.</b> The fee comes on top of every request it makes, paid to
+its developer. At 100% everything costs you double.</li></ol></section>"""
 
 
 def apps_block(t: dict, feed: dict) -> str:
@@ -1433,25 +1486,28 @@ def apps_block(t: dict, feed: dict) -> str:
     if not mine:
         return ""
     by = {x["token"]: x for x in feed["tokens"]}
-    cards = "".join(app_card(a, by, "../", own) for a, own in sorted(mine, key=lambda x: not x[1]))
-    return (f'<section class="apps"><h2>Sign in with Orbio</h2><p class="muted">Apps the sites on this file send people '
-            f'to, as Orbio’s own consent page describes them.</p>{cards}<p class="muted small">{APPS_NOTE} '
-            f'<a href="../apps.html">Every app on file →</a></p></section>')
+    cards = "".join(app_pass(a, by, "../", own, seen=False) for a, own in sorted(mine, key=lambda x: not x[1]))
+    return (f'<section class="apps"><h2>Sign in with Orbio</h2><p class="muted">Apps the sites on this file sign people in to, '
+            f'as Orbio’s own consent screen describes them.</p><div class="passes">{cards}</div>'
+            f'<p class="more"><a href="../apps.html">Every app on file, and how to check one →</a></p></section>')
 
 
 def apps_page(feed: dict) -> str:
     apps = sorted(feed.get("apps") or [], key=lambda a: ({"impersonator": 0, "unverified": 1, "official": 2}[a["status"]],
                                                           -(a.get("first_seen") or 0)))
     by = {x["token"]: x for x in feed["tokens"]}
-    n = {s: sum(1 for a in apps if a["status"] == s) for s in APP_STATUS}
-    body = "".join(app_card(a, by, "", seen=True) for a in apps) or '<p class="muted">No apps found yet.</p>'
-    return f"""<section class="page-head"><h1>Sign in with Orbio apps</h1><p class="sub">Since 1 October a project on Orbio can let
-you sign in with your Orbio account. An app you connect can spend your Orbio balance, some ask to post to X as you, and its
-developer can add a fee of up to 100% on top of everything it spends. {NAME} finds the apps on the sites Orbio agents point
-to and reads what Orbio’s consent page says about each, every day: {plural(len(apps), "app")} on file, {n["official"]} official,
-{n["unverified"]} unverified, {n["impersonator"]} from impersonators.</p></section>
-<div class="apps applist">{body}</div><p class="muted small">{APPS_NOTE} Before you approve one, check the “sends you back to”
-line against the project’s own site, and the fee.</p>"""
+    n = {s: sum(1 for a in apps if a["status"] == s) for s in APP_STAMP}
+    high = sum(1 for a in apps if (a.get("fee_bps") or 0) >= APP_FEE_HIGH)
+    body = "".join(app_pass(a, by) for a in apps) or '<p class="muted">No apps found yet.</p>'
+    return f"""<section class="page-head apps-head"><p class="kicker">Sign in with Orbio</p><h1>Apps that ask for your Orbio account</h1>
+<p class="sub">Since 1 October a project can let you sign in with Orbio. The app you approve can spend your balance, may post
+to X as you, and can add a fee of up to 100%. {NAME} finds these apps on the sites Orbio agents point to and reads Orbio’s own
+consent screen for each, every day.</p>
+<dl class="tally"><div><dt>apps on file</dt><dd>{len(apps)}</dd></div><div><dt>official</dt><dd class="ok">{n["official"]}</dd></div>
+<div><dt>unverified</dt><dd class="warn">{n["unverified"]}</dd></div><div><dt>impersonators’</dt><dd class="bad">{n["impersonator"]}</dd></div>
+<div><dt>fee of 10% or more</dt><dd>{high}</dd></div></dl></section>
+{consent_guide(apps)}
+<div class="passes">{body}</div>"""
 
 
 def trader_block(t: dict, now: int) -> str:
@@ -2482,14 +2538,78 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .related{margin-top:16px;padding-top:14px;border-top:1px dashed var(--rule)}.related h3{margin-top:0}
 .related ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}.related.bad h3{color:var(--bad)}
 .cols{display:grid;grid-template-columns:1.25fr 1fr;gap:16px}
-.project,.score,.safety,.treasury,section.apps{background:var(--sheet);border:1px solid var(--rule);border-radius:14px;padding:20px 22px}
-.apps .app{border-top:1px solid var(--rule);padding:14px 0 2px;min-width:0}.apps .app:first-of-type{border-top:0}
-section.apps>.app:first-of-type{margin-top:4px}.apps .app h3{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0}
-.apps .checks li{overflow-wrap:anywhere}
-.appst{font:600 11.5px/1 var(--mono);letter-spacing:.04em;text-transform:uppercase;padding:5px 8px 4px;border-radius:999px}
-.appst.a-official{color:var(--ok);background:var(--ok-bg)}.appst.a-unverified{color:var(--warn);background:var(--warn-bg)}
-.appst.a-impersonator{color:var(--bad);background:var(--bad-bg)}
-.applist{background:var(--sheet);border:1px solid var(--rule);border-radius:14px;padding:6px 22px 14px;margin:16px 0}
+.project,.score,.safety,.treasury{background:var(--sheet);border:1px solid var(--rule);border-radius:14px;padding:20px 22px}
+/* Sign in with Orbio: each app an access pass, its fee on a tear-off stub */
+section.apps{margin:22px 0}section.apps>p{margin:6px 0 0}
+.passes{display:grid;gap:18px;margin:18px 0}
+.pass{--pc:var(--warn);--notch:var(--bg);position:relative;display:grid;grid-template-columns:minmax(0,1fr) 210px;background:var(--sheet);
+  border:1px solid var(--rule);border-radius:16px;overflow:hidden}
+.pass.p-official{--pc:var(--ok)}.pass.p-impersonator{--pc:var(--bad)}.pass.dead{opacity:.6}
+.pass::before{content:"";position:absolute;inset:0 0 auto;height:3px;background:var(--pc);z-index:1}
+.pass-main{padding:20px 22px 16px;display:flex;flex-direction:column;gap:13px;min-width:0}
+.pass-head{display:flex;align-items:center;gap:12px}
+.mono-tile{flex:none;width:46px;height:46px;border-radius:13px;display:grid;place-items:center;font:800 23px/1 var(--display);
+  color:var(--pc);background:color-mix(in srgb,var(--pc) 13%,transparent);border:1px solid color-mix(in srgb,var(--pc) 38%,transparent)}
+.pass-id{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}.pass-id h3{font:800 21px/1.12 var(--display);overflow-wrap:anywhere}
+.cid{font:500 11.5px/1.3 var(--mono);color:var(--muted)}
+.pass-head .stamp{flex:none;font-size:12.5px;padding:7px 10px 6px;border-width:3px}
+.ret{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:10px 13px;border-radius:11px;background:var(--sheet-2);border:1px solid var(--rule)}
+.ret svg{width:17px;height:17px;color:var(--pc);flex:none}.ret code{font:600 14.5px var(--mono);color:var(--ink);overflow-wrap:anywhere}
+.ret .lbl,.perm-row .lbl,.stub .lbl{font:600 11px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.pass-notes{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:14px}
+.pass-notes li{display:flex;gap:9px;align-items:baseline}.pass-notes li>span{min-width:0;overflow-wrap:anywhere}
+.pass-notes li::before{content:"";flex:none;width:8px;height:8px;border-radius:50%;background:var(--st);transform:translateY(-1px)}
+.pass-notes .ok{--st:var(--ok)}.pass-notes .warn{--st:var(--warn)}.pass-notes .bad{--st:var(--bad)}
+.perm-row{display:flex;flex-direction:column;gap:7px;margin:0}
+.perms{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}
+.perm{display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 4px 8px;border-radius:10px;border:1px dashed var(--rule-2);
+  color:var(--muted);opacity:.5;font:600 11.5px/1.2 var(--sans);text-align:center;cursor:help}
+.perm svg{width:19px;height:19px}.perm:not(.on) span{text-decoration:line-through;text-decoration-color:var(--rule-2)}
+.perm.on{opacity:1;border-style:solid;border-color:color-mix(in srgb,var(--accent) 45%,var(--rule));background:var(--accent-bg);color:var(--ink)}
+.perm.on svg{color:var(--accent)}
+.perm.on.risk{border-color:color-mix(in srgb,var(--bad) 55%,var(--rule));background:var(--bad-bg)}.perm.on.risk svg,.perm.on.risk span{color:var(--bad)}
+.pass-foot{margin:0;font-size:12.5px;color:var(--muted)}
+.stub{--fc:var(--muted);position:relative;padding:22px 18px 16px;display:flex;flex-direction:column;gap:5px;border-left:2px dashed var(--rule-2);background:var(--sheet-2)}
+.stub.f-ok{--fc:var(--ok)}.stub.f-warn{--fc:var(--warn)}.stub.f-bad{--fc:var(--bad)}
+.stub::before,.stub::after{content:"";position:absolute;left:-12px;width:22px;height:22px;border-radius:50%;background:var(--notch);border:1px solid var(--rule)}
+.stub::before{top:-12px}.stub::after{bottom:-12px}
+.stub .fee{font:800 46px/1 var(--display);font-stretch:85%;color:var(--fc);letter-spacing:-.02em;margin-top:2px}
+.stub small{font-size:12px;color:var(--muted);line-height:1.35}
+.fee-meter{display:block;height:6px;border-radius:99px;background:var(--rule);overflow:hidden;margin:8px 0 2px}
+.fee-meter span{display:block;height:100%;background:var(--fc);border-radius:inherit}
+.receipt{margin:4px 0 0;display:grid;gap:3px;font:500 12.5px var(--mono);font-variant-numeric:tabular-nums}
+.receipt div{display:flex;justify-content:space-between;gap:8px}.receipt dt{color:var(--muted)}.receipt dd{margin:0;color:var(--ink-2)}
+.receipt .tot{border-top:1px solid var(--rule-2);padding-top:4px;margin-top:2px}.receipt .tot dd{color:var(--fc);font-weight:600}
+.stub .was{margin-top:4px}.stub .was.up{color:var(--bad)}
+.apps-head .kicker{margin:0 0 8px;font:600 12px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.tally dd.ok{color:var(--ok)}.tally dd.warn{color:var(--warn)}.tally dd.bad{color:var(--bad)}
+.guide{display:grid;grid-template-columns:minmax(0,360px) minmax(0,1fr);gap:30px;align-items:center;margin:26px 0 8px;padding:24px;
+  border:1px solid var(--rule);border-radius:16px;background:var(--sheet)}
+.mock{margin:0;border:1px solid var(--rule-2);border-radius:14px;background:var(--bg);overflow:hidden;box-shadow:0 14px 34px -22px rgba(0,0,0,.7)}
+.mock-bar{display:flex;align-items:center;gap:5px;padding:8px 11px;border-bottom:1px solid var(--rule);background:var(--sheet-2)}
+.mock-bar>span{width:7px;height:7px;border-radius:50%;background:var(--rule-2)}.mock-bar code{margin-left:8px;font:500 11px var(--mono);color:var(--muted)}
+.mock-body{padding:16px 16px 14px;display:grid;gap:11px;font-size:13.5px}
+.mock-title{margin:0;font:600 15px/1.35 var(--sans)}.mock-ret,.mock-fee{margin:0;color:var(--muted);font-size:12.5px}
+.mock mark{background:none;color:var(--ink);font:600 12.5px var(--mono);outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+.mock-asks{list-style:none;margin:0;padding:0;display:grid;gap:5px;position:relative}
+.mock-asks li{padding:6px 9px;border-radius:7px;background:var(--sheet-2);font-size:12.5px}.mock-asks li.risk{color:var(--bad);background:var(--bad-bg)}
+.mock-fee b{color:var(--ink);font-family:var(--mono)}
+.mock-btns{display:flex;justify-content:flex-end;gap:8px}.mock-btns span{font:600 12.5px var(--sans);padding:6px 13px;border-radius:8px;border:1px solid var(--rule-2);color:var(--ink-2)}
+.mock-btns .go{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.pin{display:inline-grid;place-items:center;width:19px;height:19px;border-radius:50%;background:var(--accent);color:var(--bg);font:700 11px/1 var(--mono);
+  font-style:normal;margin-left:7px;vertical-align:middle}
+.mock-asks .pin{position:absolute;right:-9px;top:-9px;margin:0}
+.mock figcaption{padding:8px 12px;font-size:11.5px;color:var(--muted);border-top:1px solid var(--rule)}
+.checks-3{margin:0;padding:0;list-style:none;counter-reset:c;display:grid;gap:16px}
+.checks-3 li{counter-increment:c;position:relative;padding-left:38px;color:var(--ink-2);line-height:1.5}
+.checks-3 li::before{content:counter(c);position:absolute;left:0;top:0;width:25px;height:25px;border-radius:50%;display:grid;place-items:center;
+  background:var(--accent);color:var(--bg);font:700 12px var(--mono)}
+.checks-3 b{color:var(--ink)}
+@media (max-width:760px){.guide{grid-template-columns:1fr;padding:18px;gap:22px}}
+@media (max-width:640px){.pass{grid-template-columns:1fr}.pass-main{padding:18px 16px 14px}
+  .stub{border-left:0;border-top:2px dashed var(--rule-2);padding:18px 16px 14px}
+  .stub::before{top:-12px;left:-12px}.stub::after{top:-12px;bottom:auto;left:auto;right:-12px}
+  .perms{grid-template-columns:repeat(3,minmax(0,1fr))}.pass-head{flex-wrap:wrap}.pass-head .stamp{order:3}}
 .claim{font-size:16.5px;line-height:1.5;margin:12px 0 4px}
 .desc{margin:14px 0 4px;padding:0 0 0 14px;border-left:2px solid var(--rule-2);color:var(--ink-2);font-style:italic;overflow-wrap:anywhere}
 .xcard{margin-top:14px;padding:12px 14px;border:1px solid var(--rule);border-radius:10px;background:var(--sheet-2)}
@@ -2707,8 +2827,7 @@ th[data-sort] button{padding:8px 0}
 .list th,.list td{padding:10px 8px}.list .chip{font-size:10px;padding:3px 7px;letter-spacing:.03em}.list .status{font-size:10px;padding:2px 6px}.notfound .more a{display:inline-block;padding:8px 2px}.list th.num,.list td.num{padding-right:2px}
 }
 @media (max-width:560px){.keynums{grid-template-columns:repeat(2,minmax(0,1fr))}.hide-sm{display:none}.stampbox{flex-direction:row;padding:0}
-.stamp.big{font-size:20px;padding:11px 16px 9px}.verdict .why{font-size:17px}.file{padding:18px 16px}.verdict,.project,.score,.safety,.treasury,.evidence,section.apps{padding:16px}
-.applist{padding:4px 16px 12px}
+.stamp.big{font-size:20px;padding:11px 16px 9px}.verdict .why{font-size:17px}.file{padding:18px 16px}.verdict,.project,.score,.safety,.treasury,.evidence{padding:16px}
 .tally{gap:10px 24px}.tally dd{font-size:22px}}
 """
 DARK = ("--bg:#090d12;--sheet:#10161f;--sheet-2:#151d28;--ink:#e7ecf3;--ink-2:#b4bfcd;--muted:#8792a4;--rule:#212a36;--rule-2:#324050;"
