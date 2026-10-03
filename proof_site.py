@@ -69,7 +69,8 @@ LINES = {
 }
 FLAGS = {"CREATOR_EXIT": "Creator sold most of their launch buy", "FEE_REDIRECT": "Creator fees sent to a fresh wallet",
          "LAUNCH_BUNDLE": "Several buyers in the launch block", "SERIAL": "Creator launched 3+ tokens in a day",
-         "CONFLICT": "Official channels disagree", "BORROWED": "Points at another organisation's brand"}
+         "CONFLICT": "Official channels disagree", "BORROWED": "Points at another organisation's brand",
+         "COPIER_CREATOR": "Launched by a wallet that also launched 3+ confirmed copies of other projects"}
 FONTS = ("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,500..800"
          "&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400..700&display=swap")
 EXPLORER = "https://robin.etherscan.io"
@@ -834,7 +835,8 @@ STATUS_TEXT = {
 DIM_ASK = {"product": "Does something exist, and does it work?", "build": "Is code being written?",
            "team": "Is someone accountable?", "work": "Is it doing anything?", "integrity": "Is the token itself sound?"}
 CAUTION = {"CREATOR_EXIT": "Creator sold", "FEE_REDIRECT": "Fees redirected", "LAUNCH_BUNDLE": "Bundled launch",
-           "SERIAL": "Serial launcher", "CONFLICT": "Channels disagree", "BORROWED": "Borrowed brand"}
+           "SERIAL": "Serial launcher", "CONFLICT": "Channels disagree", "BORROWED": "Borrowed brand",
+           "COPIER_CREATOR": "Copier's wallet"}
 ICON = {
     "proven": '<circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4.9 8.2l2.1 2.1 4.2-4.5" fill="none" '
               'stroke="var(--sheet)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
