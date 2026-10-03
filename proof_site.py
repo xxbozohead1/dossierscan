@@ -2133,7 +2133,8 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .findings{list-style:none;counter-reset:f;margin:14px 0 0;padding:0;display:grid;gap:12px}
 .findings>li{counter-increment:f;position:relative;padding:16px 18px 16px 58px;background:var(--sheet);border:1px solid var(--rule);border-radius:12px}
 .findings>li::before{content:counter(f,decimal-leading-zero);position:absolute;left:18px;top:17px;font:700 15px var(--mono);color:var(--accent)}
-.findings h3{font-size:18px}.findings p{margin:8px 0 0;color:var(--ink-2);max-width:78ch}
+.findings h3{font-size:18px}.findings p{margin:8px 0 0;color:var(--ink-2);max-width:78ch;overflow-wrap:anywhere}
+.findings>li{min-width:0}.findings .rc .rcpt{white-space:normal;overflow-wrap:anywhere}
 .findings .rc{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13.5px}
 .fig{margin:12px 0 4px;padding:14px 16px 12px;background:var(--sheet-2);border:1px solid var(--rule);border-radius:10px;max-width:78ch;min-width:0;container-type:inline-size}
 .fig figcaption{margin-top:10px;font-size:12.5px;color:var(--muted)}
