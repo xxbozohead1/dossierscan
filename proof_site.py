@@ -831,13 +831,22 @@ def card(t: dict, now: int, up: str = "") -> str:
         f = tk["first"] or {}                        # and link it (it may be a Pons launch, which isn't in this feed)
         extra += (f'<p class="copynote">{ordinal(tk["rank"])} ${e(t["symbol"] or "?")}: {first_link(f, up)} launched '
                   f'{e(fmt_span((t["launched_at"] or 0) - (f.get("ts") or 0)))} earlier{where_launched(f)}</p>')
+    receipt = "".join(" " + link(u, "Receipt", "rcpt") for u in rc)
+    why = e(sentence(t["verdict"]["why"])) + receipt
+    if s in MEMES:  # a meme's card says what it is; its wallet, when that's a copier's, as a warning
+        m = t.get("meme") or {}
+        why = {"meme": "Claims no project: nothing to verify. Judge it on its trader's card.",
+               "tribute": f"Named after @{e(m.get('of') or '?')}, who hasn't posted it.",
+               "copycat": "A later launch of a meme launched before under this name."}[s]
+        if m.get("copier_wallet"):
+            why += f' <span class="warnline">🚩 From a copier’s wallet.{receipt}</span>'
     return f"""<li class="card" data-t="{t["token"]}" data-lt="{t["launched_at"] or 0}" data-state="{group_of(s)}">
 <div class="card-top"><span class="fileno">{fileno(t)}</span><span class="age">{when(t["launched_at"])}</span>{tools(t["token"])}</div>
 <div class="card-title">{tref(t, up, "tok stretch")}<span data-l="chip">{chip(s)}</span></div>
 <div class="trend" data-l="trend"></div>
 <dl class="card-nums"><div><dt>Market cap</dt><dd>{ph("mcap")}</dd></div><div><dt>Curve</dt><dd>{ph("curve")}</dd></div>
 <div><dt>Holders</dt><dd>{ph("holders")}</dd></div></dl>
-<p class="why">{e(sentence(t["verdict"]["why"]))}{"".join(f" {link(u, 'Receipt', 'rcpt')}" for u in rc)}</p>{extra}</li>"""
+<p class="why">{why}</p>{extra}</li>"""
 
 
 def feed_cards(ts: list[dict], now: int, up: str = "") -> str:
@@ -1144,7 +1153,7 @@ def token_page(t: dict, feed: dict) -> str:
 <div data-l="chart"></div>{"" if agent else '<p class="muted small">Market numbers come from Orbio and cover Orbio agents only.</p>'}
 </article>
 {verdict_block(t, s)}
-<div class="cols">{project_block(t, s)}{score_block(t)}</div>
+<div class="cols">{project_block(t, s)}{score_block(t, s)}</div>
 {trader_block(t, now)}
 {apps_block(t, feed)}
 {treasury_block(t) if tr else ""}
@@ -1272,11 +1281,16 @@ def project_block(t: dict, s: str = "") -> str:
 joined {joined}{f' · {plural(xp["posts_28d"], "post")} in 4 weeks' if xp.get("posts_28d") is not None else ""}</span></p>
 {f'<p class="bio">{e(xp["bio"])}</p>' if xp.get("bio") else ""}</div>""")
     if not parts:
-        parts.append('<p class="muted">Nothing it points at describes a product yet.</p>')
-    return f'<section class="project"><h2>The project</h2>{"".join(parts)}</section>'
+        parts.append('<p class="muted">Nothing it points at describes a product yet.</p>' if s not in MEMES else
+                     '<p class="muted">No socials, site or description: just a name and a ticker.</p>')
+    return f'<section class="project"><h2>{"What it points at" if s in MEMES else "The project"}</h2>{"".join(parts)}</section>'
 
 
-def score_block(t: dict) -> str:
+def score_block(t: dict, s: str = "") -> str:
+    if s in MEMES:  # the score measures a product, a team and work: a meme claims none of them
+        return ("<section class=\"score\"><h2>Score</h2><p class=\"big muted\">Not scored</p><p>A meme claims no product, "
+                "team or work to score. What matters is on its trader's card below: who launched it, who bought first, and "
+                "whether holders keep growing.</p></section>")
     sc = t.get("scores")
     if t["verdict"]["verdict"] == "scam" and not sc:
         return """<section class="score"><h2>Score</h2><p class="big muted">Not scored</p>
@@ -2303,6 +2317,7 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .card-nums{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0;padding:9px 0;border-block:1px dashed var(--rule)}
 .card-nums dt{font-size:11.5px;color:var(--muted)}.card-nums dd{margin:0;font:500 14px var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
 .card .why{margin:0;font-size:13.5px;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.card .why .warnline{color:var(--bad);font-weight:600}
 .rcpt{font-weight:600;white-space:nowrap}
 .trend{display:flex;align-items:center;gap:12px}.trend .spark{flex:1;min-width:0}.trend .tv{font:500 12.5px var(--mono);text-align:right;white-space:nowrap;color:var(--muted)}
 .trend .tv b{display:block;font-weight:600;font-size:13.5px;color:var(--ink)}.trend .none{flex:1;font-size:12px;color:var(--muted)}
