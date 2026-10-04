@@ -22,6 +22,41 @@ dossier.example.com {
 	@pages path / *.html
 	header @pages Cache-Control "public, max-age=60"
 
+	# who reads it (proof_index.reader_stats, in the private daily digest): pages and the API only, never assets or the
+	# numbers pages poll. The visitor's address is cut to its network (/24, /48) and nothing else naming them is kept.
+	# The indexer's user reads the log through the caddy group (deploy/setup.sh)
+	@unlogged not path / *.html /api/*
+	log_skip @unlogged
+	log_skip @live
+	log {
+		output file /var/log/caddy/dossier.access.log {
+			roll_size 50MiB
+			roll_keep 5
+			roll_keep_for 720h
+			mode 0640
+		}
+		format filter {
+			wrap json
+			fields {
+				request>headers>Cf-Connecting-Ip ip_mask {
+					ipv4 24
+					ipv6 48
+				}
+				request>remote_ip delete
+				request>remote_port delete
+				request>client_ip delete
+				request>headers>X-Forwarded-For delete
+				request>headers>True-Client-Ip delete
+				request>headers>X-Real-Ip delete
+				request>headers>Cf-Connecting-Ipv6 delete
+				request>headers>Cf-Pseudo-Ipv4 delete
+				request>headers>Cookie delete
+				request>tls delete
+				resp_headers delete
+			}
+		}
+	}
+
 	# only data/site is served: the index's database, logs and .env sit outside the root
 	handle_errors {
 		@missing expression {err.status_code} == 404

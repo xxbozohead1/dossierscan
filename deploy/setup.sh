@@ -66,6 +66,9 @@ if [ "$CADDY" = 1 ]; then
     fi
     sed -e "s#dossier.example.com#$DOMAIN#g" -e "s#/opt/orbio#$DIR#g" -e "s|# @tls|$TLS|" "$DIR/deploy/Caddyfile" > /etc/caddy/Caddyfile
     caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+    # the daily digest counts readers from Caddy's access log (group-readable)
+    mkdir -p /var/log/caddy && chown caddy:caddy /var/log/caddy
+    id -nG orbio | grep -qw caddy || usermod -aG caddy orbio
 fi
 
 # SSH and the web; the bot and the indexer only make outgoing connections
