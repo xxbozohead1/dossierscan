@@ -37,8 +37,9 @@ CHECKING_FOR = 3 * DAY  # the index re-checks an unclaimed Orbio agent for 72 ho
 DIMS = (("product", "Product", 30), ("build", "Build", 20), ("team", "Team", 20), ("work", "Work", 20),
         ("integrity", "Integrity", 10))
 STATE = {"verified": "Verified", "scam": "Impersonator", "linked": "Impersonator's wallet", "checking": "Checking",
-         "unverified": "Unverified"}
+         "unverified": "Unverified", "meme": "Meme", "tribute": "Tribute", "copycat": "Copycat"}
 RED = ("scam", "linked")  # both red; "linked" is red for its money (proof_index.link_pass), not for a project's word
+MEMES = ("meme", "tribute", "copycat")  # a token that claims no project: nothing to verify (proof_index.meme_label)
 STATE_TEXT = {
     "verified": "The project's own X account or website lists this exact contract.",
     "scam": "An official channel lists a different contract, or says this token isn't theirs.",
@@ -47,6 +48,12 @@ STATE_TEXT = {
     "checking": "Nothing official lists this contract yet. Dossier keeps checking for 72 hours after launch; "
                 "the official post often lands a few minutes after the token.",
     "unverified": "Nothing official lists this contract. That isn't proof of a scam, but no one has claimed it.",
+    "meme": "A meme: it claims no product and no official account, so there's nothing to verify. Judge it on its "
+            "trader's card: who launched it, who bought first, and whether holders are growing.",
+    "tribute": "A meme named after someone who hasn't posted it. It turns verified if they post this contract, and an "
+               "impersonator if they disown it.",
+    "copycat": "A later launch of a meme already launched under this name. Copies of a meme aren't fakes of a project, "
+               "and the first launch isn't always the one that trades: compare their trader's cards.",
 }
 LEVEL_TEXT = {
     "bound": "claims this token: it posted or lists this contract",
@@ -159,6 +166,8 @@ def num(x, unit: str = "") -> str:
 
 def state_of(t: dict, now: int) -> str:
     v = t["verdict"]["verdict"]
+    if t.get("meme"):  # unverified, or red only for its wallet, and claims no project (proof_index.meme_label)
+        return t["meme"]["kind"]
     if v == "scam" and t["verdict"].get("kind") == "linked":
         return "linked"
     if v == "unverified" and t.get("orbio_agent") and now - (t.get("launched_at") or 0) < CHECKING_FOR:
@@ -167,8 +176,9 @@ def state_of(t: dict, now: int) -> str:
 
 
 def group_of(s: str) -> str:
-    """The filter a state falls under: an impersonator's wallet with the impersonators, unverified with checking."""
-    return "scam" if s == "linked" else "checking" if s == "unverified" else s
+    """The filter a state falls under: an impersonator's wallet with the impersonators, unverified with checking, a
+    tribute or a copycat with the memes."""
+    return "scam" if s == "linked" else "checking" if s == "unverified" else "meme" if s in MEMES else s
 
 
 def chip(s: str) -> str:
@@ -620,7 +630,7 @@ def launch_map(ts: list[dict], now: int, base: float = 0.0, top: list[dict] | No
         views.append(("top", map_svg(top, now, lambda t: top_r(t, high), "top")))
     if not views:
         return ""
-    keys = [("verified", "Verified"), ("scam", "Impersonator"), ("checking", "Checking")]
+    keys = [("verified", "Verified"), ("scam", "Impersonator"), ("checking", "Checking"), ("meme", "Meme")]
     if any(v == "top" for v, _ in views):  # agents past their 72 hours unclaimed: only the Biggest view has them
         keys.append(("unverified", "Unverified"))
     legend = "".join(f'<button type="button" class="v-{k}{" for-top" if k == "unverified" else ""}" data-filter="{k}" '
@@ -699,7 +709,7 @@ def map_svg(ts: list[dict], now: int, size, mode: str = "new", base: float = 0.0
                                                         ("o", tk.get("rank") if (tk.get("total") or 0) > 1 else None)) if v}
             # every launch in the last 48 hours is still being checked if nobody has claimed it (72 hours), so on the
             # New view an unclaimed one filters as checking; the Biggest view also has agents past that
-            st = "scam" if s == "linked" else "checking" if s == "unverified" and mode == "new" else s
+            st = "scam" if s == "linked" else "meme" if s in MEMES else "checking" if s == "unverified" and mode == "new" else s
             parts.append(f'<a class="bub v-{s}" href="t/{t["token"]}.html" data-t="{t["token"]}"{fam} '
                          f'data-state="{st}"><title>{e(tip)}</title>{orb(x, y, r)}{label}</a>')
         out.append(f'<g class="body" data-x="{X:.1f}" data-y="{Y:.1f}" data-r="{R:.1f}" transform="translate({X:.1f} {Y:.1f})">'
@@ -733,7 +743,7 @@ def home(feed: dict) -> str:
     toks, now = feed["tokens"], feed["generated_at"]
     orbio = [t for t in toks if t.get("orbio_agent")]
     verified = sum(1 for t in orbio if t["verdict"]["verdict"] == "verified")
-    scams = sorted((t for t in toks if t["verdict"]["verdict"] == "scam"), key=lambda t: -(t["launched_at"] or 0))
+    scams = sorted((t for t in toks if state_of(t, now) in RED), key=lambda t: -(t["launched_at"] or 0))
     board = sorted((t for t in toks if t["status"] in ("PROVEN", "LIVE", "BUILDING")), key=rank)
     recent = sorted((t for t in orbio if (t["launched_at"] or 0) >= now - 2 * DAY), key=lambda t: -(t["launched_at"] or 0))
     base = start_mcap(toks)
@@ -743,7 +753,8 @@ def home(feed: dict) -> str:
     filters = "".join(f'<button type="button" data-filter="{k}" aria-pressed="{"true" if k == "all" else "false"}">{label}'
                       f'<span>{n}</span></button>' for k, label, n in (
                           ("all", "All", len(recent)), ("verified", "Verified", counts["verified"]),
-                          ("checking", "Checking", counts["checking"] + counts["unverified"]), ("scam", "Impersonators", counts["scam"] + counts["linked"])))
+                          ("checking", "Checking", counts["checking"] + counts["unverified"]),
+                          ("meme", "Memes", sum(counts[s] for s in MEMES)), ("scam", "Impersonators", counts["scam"] + counts["linked"])))
     # scams also holds copies launched straight on Pons, off the launchpad: next to the agent count, count agents only
     orbio_scams = sum(1 for t in scams if t.get("orbio_agent"))
     tally = [(e(len(orbio)), "Orbio agents on file"), (e(verified), "verified by their project"),
@@ -1081,7 +1092,7 @@ def scam_split(scams: list[dict]) -> str:
 
 def scams_page(feed: dict) -> str:
     now = feed["generated_at"]
-    scams = sorted((t for t in feed["tokens"] if t["verdict"]["verdict"] == "scam"), key=lambda t: -(t["launched_at"] or 0))
+    scams = sorted((t for t in feed["tokens"] if state_of(t, now) in RED), key=lambda t: -(t["launched_at"] or 0))
     return f"""<section class="page-head"><h1>Impersonators caught</h1><p class="sub">{len(scams)} tokens that copy a real
 project's identity: {scam_split(scams)}. Orbio agents show their number (#). A token is marked an impersonator when an
 official channel lists a different contract or says the token isn't theirs, or when it was launched from the wallet, or the
@@ -1116,7 +1127,9 @@ def token_page(t: dict, feed: dict) -> str:
                                   if tl.get("flagged_at") and t["launched_at"] and tl["flagged_at"] >= t["launched_at"] else "by the index"),
             "linked": "Flagged for its money: no project has claimed it",
             "checking": f"Checked {plural(tl.get('checks') or 0, 'time')} so far",
-            "unverified": "No claim after 72 hours"}[s]
+            "unverified": "No claim after 72 hours",
+            "meme": "Claims no project", "tribute": f"Named after @{(t.get('meme') or {}).get('of') or '?'}",
+            "copycat": "A later launch of this meme"}[s]
     badges = "".join(f'<span class="badge">{e(b.title())}</span>' for b in t.get("badges") or [] if b != "ORBIO AGENT")
     return f"""<div class="filepage" data-t="{addr}"><p class="crumb"><a href="../index.html#live">← New launches</a></p>
 <article class="file v-{s}">
@@ -1152,7 +1165,42 @@ def fmt_span(secs: int | None) -> str:
     return f"{round(secs / DAY)} days"
 
 
+def meme_block(t: dict, s: str) -> str:
+    """A meme's file opens with what it is instead of "Is this the project's token?": nothing to verify; who it's named
+    after; where it stands among the launches of the same meme; and a red warning when a copier's wallet launched it."""
+    m, v, sym = t.get("meme") or {}, t["verdict"], e(t["symbol"] or "?")
+    rows: list[tuple[str, str]] = []
+    if m.get("of"):
+        rows.append(("warn", f'Named after {link("https://x.com/" + m["of"], "@" + m["of"])}, who hasn’t posted this contract'))
+    wave = m.get("wave") or {}
+    if wave:
+        first, most = wave.get("first") or {}, wave.get("most") or {}
+        here = "the first" if wave["rank"] == 1 else f"the {ordinal(wave['rank'])}"
+        rows.append(("ok" if wave["rank"] == 1 else "warn",
+                     f"{here} of {wave['n']} launches of ${sym} within two days"
+                     + ("" if wave["rank"] == 1 else
+                        f"; the first, {tref({'token': first['token'], 'symbol': t['symbol'], 'orbio_agent': first.get('vault_id')}, '../', 'tok inline')}, launched {when(first.get('ts'))}")))
+        if most and most.get("token") != t["token"]:
+            rows.append(("warn", "Most holders so far: "
+                         + tref({"token": most["token"], "symbol": t["symbol"], "orbio_agent": most.get("vault_id")}, "../", "tok inline")
+                         + f" ({most['holders']:,})"))
+        elif most:
+            rows.append(("ok", f"The most holders of its wave so far ({most['holders']:,})"))
+    if m.get("copier_wallet"):
+        receipts = " ".join(link(u, "Receipt ↗") for u in v.get("receipts") or [])
+        rows.append(("bad", "Launched from a copier’s wallet: the same wallet, or a chain of wallets, launched a confirmed "
+                     "copy of a real project. " + receipts))
+    bot = bot_username()
+    report = (f'<p class="report">Wrong? <a href="https://t.me/{bot}?start=r_{t["token"]}" rel="noopener" target="_blank">'
+              "Report it</a>.</p>") if bot else ""
+    checks = "".join(f'<li class="{c}"><span>{txt}</span></li>' for c, txt in rows)
+    return f"""<section class="verdict v-{s}"><h2>What is it?</h2>
+<p class="why">{e(STATE_TEXT[s])}</p>{f'<ul class="checks">{checks}</ul>' if checks else ""}{report}</section>"""
+
+
 def verdict_block(t: dict, s: str) -> str:
+    if s in MEMES:
+        return meme_block(t, s)
     v = t["verdict"]
     rel = t.get("related") or {}
     receipts = "".join(f"<li>{link(u, receipt_text(u))}</li>" for u in v["receipts"])
@@ -2175,7 +2223,8 @@ CSS = """
 --accent:#2d49d8;--accent-bg:#e5e9fc;--scrim:rgba(232,235,240,.9);
 --glass:rgba(255,255,255,.52);--glass-hi:rgba(255,255,255,.9);--glass-spec:rgba(255,255,255,.95);--rim-hi:#fff;--rim-lo:rgba(13,21,34,.1);
 --ok-glow:rgba(11,122,75,.18);--bad-glow:rgba(204,37,57,.16);--accent-glow:rgba(45,73,216,.18);
---amb-a:rgba(45,73,216,.16);--amb-b:rgba(11,122,75,.12);--amb-c:rgba(204,37,57,.09);--ok:#0b7a4b;--ok-bg:#e0f2e8;--bad:#cc2539;--bad-bg:#fbe6e9;--warn:#9a6300;--warn-bg:#faefd4}
+--amb-a:rgba(45,73,216,.16);--amb-b:rgba(11,122,75,.12);--amb-c:rgba(204,37,57,.09);--ok:#0b7a4b;--ok-bg:#e0f2e8;--bad:#cc2539;--bad-bg:#fbe6e9;--warn:#9a6300;--warn-bg:#faefd4;
+--meme:#8a3ec2;--meme-bg:#f2e8fa;--meme-glow:rgba(138,62,194,.16)}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 var(--sans)}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
@@ -2268,6 +2317,7 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .chip{display:inline-flex;align-items:center;gap:6px;flex:none;font:600 11.5px var(--mono);letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:999px;white-space:nowrap;color:var(--st);background:var(--st-bg)}
 .chip i{width:6px;height:6px;border-radius:50%;background:currentColor}
 .v-verified{--st:var(--ok);--st-bg:var(--ok-bg)}.v-scam,.v-linked{--st:var(--bad);--st-bg:var(--bad-bg)}
+.v-meme,.v-tribute{--st:var(--meme);--st-bg:var(--meme-bg)}.v-copycat{--st:var(--warn);--st-bg:var(--warn-bg)}
 .v-checking{--st:var(--accent);--st-bg:var(--accent-bg)}.v-unverified{--st:var(--warn);--st-bg:var(--warn-bg)}
 .status{display:inline-block;font:600 11.5px var(--mono);letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:5px;border:1px solid var(--rule-2);color:var(--ink-2);white-space:nowrap}
 .s-proven{background:var(--ok);border-color:var(--ok);color:var(--sheet)}.s-live{border-color:var(--ok);color:var(--ok)}
@@ -2783,6 +2833,7 @@ th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] bu
 .lineup a.me{outline:2px solid var(--ink);outline-offset:2px}.lineup-note{margin:4px 0 0}
 .card[data-state=verified]{--st-glow:var(--ok-glow);--st-rim:var(--ok)}.card[data-state=scam]{--st-glow:var(--bad-glow);--st-rim:var(--bad)}
 .card[data-state=checking]{--st-glow:var(--accent-glow);--st-rim:var(--accent)}
+.card[data-state=meme]{--st-glow:var(--meme-glow);--st-rim:var(--meme)}
 .trader h3{margin:16px 0 6px;font:600 11.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}.trader h3:first-of-type{margin-top:8px}
 .copynote{margin:0;font-size:13px;color:var(--warn);font-weight:600}
 .token-hero{display:flex;align-items:center;gap:18px;margin-bottom:6px}.token-hero h1{margin:0}
@@ -2836,7 +2887,7 @@ DARK = ("--bg:#090d12;--sheet:#10161f;--sheet-2:#151d28;--ink:#e7ecf3;--ink-2:#b
         "--rim-hi:rgba(255,255,255,.5);--rim-lo:rgba(255,255,255,.06);"
         "--ok-glow:rgba(57,208,140,.24);--bad-glow:rgba(255,96,114,.22);--accent-glow:rgba(143,163,255,.24);"
         "--amb-a:rgba(143,163,255,.16);--amb-b:rgba(57,208,140,.11);--amb-c:rgba(255,96,114,.09);--ok:#39d08c;--ok-bg:#0e2a1d;--bad:#ff6072;--bad-bg:#301318;--warn:#f3b64b;"
-        "--warn-bg:#2c2210;color-scheme:dark")
+        "--warn-bg:#2c2210;--meme:#c792ff;--meme-bg:#241638;--meme-glow:rgba(199,146,255,.22);color-scheme:dark")
 CSS = CSS.replace("@@DARK@@", DARK)
 
 JS = r"""
@@ -2849,10 +2900,11 @@ JS = r"""
     if(light)HTML.setAttribute('data-theme','light');else HTML.removeAttribute('data-theme');
     try{localStorage.setItem('dossier.theme',light?'light':'dark')}catch(e){}themeSync()});
   themeSync();
-  var LABEL={verified:'Verified',scam:'Impersonator',linked:'Impersonator’s wallet',checking:'Checking',unverified:'Unverified'},SUB='₀₁₂₃₄₅₆₇₈₉';
+  var LABEL={verified:'Verified',scam:'Impersonator',linked:'Impersonator’s wallet',checking:'Checking',unverified:'Unverified',
+    meme:'Meme',tribute:'Tribute',copycat:'Copycat'},SUB='₀₁₂₃₄₅₆₇₈₉';
   var ORDER={verified:3,checking:2,unverified:1,scam:0,linked:0},filterKey='all',VTEXT=@@VTEXT@@;
   // the filter a state falls under (group_of in proof_site.py): an impersonator's wallet with the impersonators
-  function grp(s){return s==='linked'?'scam':s==='unverified'?'checking':s}
+  function grp(s){return s==='linked'?'scam':s==='unverified'?'checking':(s==='tribute'||s==='copycat')?'meme':s}
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
   function now(){return Date.now()/1000}
   function href(t){return D.href.replace('{t}',t)}
