@@ -1470,9 +1470,22 @@ def did_pill(c: dict) -> str:
     return f'<span class="did k-{kind}">{text}</span>'
 
 
+def whole_shares(parts: list[float]) -> list[int]:
+    """Whole percentages that add up to 100 (largest remainder): each share rounded on its own read 2/50/49 on 6 Oct."""
+    total = sum(parts)
+    if not total:
+        return [0] * len(parts)
+    raw = [100 * p / total for p in parts]
+    out = [int(r) for r in raw]
+    for i in sorted(range(len(raw)), key=lambda i: out[i] - raw[i])[:100 - sum(out)]:
+        out[i] += 1
+    return out
+
+
 def where_it_went(tot: dict, kinds: dict) -> str:
     """One bar per outcome, all on one 0–100% scale and labelled where they are drawn; each one lists its agents."""
     handled = tot["handled"]
+    pct = dict(zip((k for k, *_ in WORK_KINDS), whole_shares([tot[key] for _, _, key, _ in WORK_KINDS])))
     rows = []
     for kind, label, key, note in WORK_KINDS:
         x = tot[key] / handled if handled else 0
@@ -1481,7 +1494,7 @@ def where_it_went(tot: dict, kinds: dict) -> str:
         rows.append(f"""<button type="button" class="wrow k-{kind}" data-pick="{kind}" aria-pressed="false"{" disabled" if not n else ""}>
 <span class="wl"><b>{label}</b><small>{note}</small></span>
 <span class="wtrack" aria-hidden="true"><i style="width:{100 * x:.1f}%"></i></span>
-<span class="wpct">{x:.0%}</span><span class="wamt">{num(tot[key])} <small>CREDIT</small></span>
+<span class="wpct">{pct[kind]}%</span><span class="wamt">{num(tot[key])} <small>CREDIT</small></span>
 <span class="wn">{agents}{" →" if n else ""}</span></button>""")
     mixed = kinds.get("mixed", 0)
     rest = f'<p class="muted small">{mixed} more split theirs with no clear majority.</p>' if mixed else ""
