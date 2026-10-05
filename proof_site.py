@@ -1437,14 +1437,58 @@ def owner_rows(t: dict) -> list[tuple[str, str]]:
 # had moved 99% of its 8,313 out. Compute paid from the USDG AI balance, or CREDIT activated from another wallet, is
 # invisible on chain, and the page says so.
 WORK_MIN = 10  # CREDIT: an agent minted less is left off the board
+WORK_PER = 25  # rows a page
+# what an agent wallet can do with the CREDIT its fees mint, in the order the page shows them (user, 6 Oct: a stacked bar a
+# row with a legend that looked like one more bar told nobody anything; each outcome is now its own labelled bar)
+WORK_KINDS = (("work", "Put to work", "activated", "activated by the agent wallet, paying for compute"),
+              ("held", "Still held", "held", "sitting in the agent wallet, unspent"),
+              ("out", "Moved out", "moved_out", "left the wallet: sold, sent, or used from another wallet"))
 
 
-def credit_bar(c: dict) -> str:
+def work_kind(c: dict) -> str:
+    """What an agent did with most of its CREDIT: 'work', 'held' or 'out' when one of them is half or more of what its
+    fees minted, 'mixed' when none is, '' when it has no CREDIT figures."""
     m = c.get("minted") or 0
     if not m:
         return ""
-    part = lambda k, cls: f'<i class="{cls}" style="width:{100 * min(1.0, (c.get(k) or 0) / m):.1f}%"></i>'  # noqa: E731
-    return f'<span class="split3" aria-hidden="true">{part("activated", "w")}{part("held", "h")}{part("moved_out", "o")}</span>'
+    kind, key = max(((k, key) for k, _, key, _ in WORK_KINDS), key=lambda x: c.get(x[1]) or 0)
+    return kind if (c.get(key) or 0) / m >= 0.5 else "mixed"
+
+
+def did_pill(c: dict) -> str:
+    kind = work_kind(c)
+    if not kind:
+        return '<span class="did none">No CREDIT yet</span>'
+    if kind == "mixed":
+        return '<span class="did mixed">No clear majority</span>'
+    key = {k: key for k, _, key, _ in WORK_KINDS}[kind]
+    x = (c.get(key) or 0) / c["minted"]
+    whole = x >= 0.995
+    text = {"work": "Put it all to work" if whole else f"Put {x:.0%} to work",
+            "held": "Holds all of it" if whole else f"Holds {x:.0%}",
+            "out": "Moved it all out" if whole else f"Moved {x:.0%} out"}[kind]
+    return f'<span class="did k-{kind}">{text}</span>'
+
+
+def where_it_went(tot: dict, kinds: dict) -> str:
+    """One bar per outcome, all on one 0–100% scale and labelled where they are drawn; each one lists its agents."""
+    handled = tot["handled"]
+    rows = []
+    for kind, label, key, note in WORK_KINDS:
+        x = tot[key] / handled if handled else 0
+        n = kinds.get(kind, 0)
+        agents = f"{n} agent{'' if n == 1 else 's'} did mostly this" if n else "no agent did mostly this"
+        rows.append(f"""<button type="button" class="wrow k-{kind}" data-pick="{kind}" aria-pressed="false"{" disabled" if not n else ""}>
+<span class="wl"><b>{label}</b><small>{note}</small></span>
+<span class="wtrack" aria-hidden="true"><i style="width:{100 * x:.1f}%"></i></span>
+<span class="wpct">{x:.0%}</span><span class="wamt">{num(tot[key])} <small>CREDIT</small></span>
+<span class="wn">{agents}{" →" if n else ""}</span></button>""")
+    mixed = kinds.get("mixed", 0)
+    rest = f'<p class="muted small">{mixed} more split theirs with no clear majority.</p>' if mixed else ""
+    return f"""<section class="where" aria-labelledby="where-h"><h2 id="where-h">Where the {num(tot["minted"])} CREDIT went</h2>
+<p class="sub">Every CREDIT the agents’ fees minted to their wallets, by what each wallet did with it. Pick one to list the
+agents that did mostly that; pick it again to list them all.</p>
+<div class="wbars">{"".join(rows)}</div>{rest}</section>"""
 
 
 def work_page(feed: dict) -> str:
@@ -1466,11 +1510,14 @@ def work_page(feed: dict) -> str:
     confirmed = [a for _, _, a in rows if a.get("confirmed")]
     share = lambda x, m: f"{x / m:.0%}" if m else "—"  # noqa: E731
     using = sum(1 for c in credit if (c.get("activated") or 0) > 0)
+    kinds: dict[str, int] = {}
+    for c in credit:
+        kinds[work_kind(c)] = kinds.get(work_kind(c), 0) + 1
 
-    def cell(c: dict, k: str) -> str:
-        x = c.get(k) or 0
-        return f'<td class="numcol">{num(x)} <small class="muted">{share(x, c["minted"])}</small></td>' if x else \
-            '<td class="numcol muted">—</td>'
+    def cell(c: dict, key: str, kind: str) -> str:
+        x = c.get(key) or 0
+        return (f'<td class="numcol hide-sm">{num(x)} <small class="k-{kind}">{share(x, c["minted"])}</small></td>' if x else
+                '<td class="numcol hide-sm muted">—</td>')
 
     def ai_cell(a: dict) -> str:
         if not a.get("earned"):
@@ -1478,10 +1525,25 @@ def work_page(feed: dict) -> str:
         spent = (f' <small class="ok" title="Confirmed through Orbio by the agent’s own account">{usd(a["used"])} used ✓</small>'
                  if a.get("confirmed") else "")
         return f'<td class="numcol">{usd(a["earned"])}{spent}</td>'
-    body = "".join(f'<tr><td>{tref(t)}</td><td>{chip(state_of(t, now))}</td>'
-                   + (f'<td class="numcol">{num(c["minted"])}</td>{cell(c, "activated")}{cell(c, "held")}{cell(c, "moved_out")}'
-                      if c else '<td class="numcol muted">—</td>' * 4)
-                   + f'{ai_cell(a)}<td class="hide-sm">{credit_bar(c)}</td></tr>' for t, c, a in rows)
+
+    def row(i: int, t: dict, c: dict, a: dict) -> str:
+        s = state_of(t, now)
+        data = (f'data-t="{t["token"]}" data-sym="{e((t["symbol"] or "").lower())}" data-state="{s}" '
+                f'data-search="{e(search_key(t))} #{t["orbio_agent"]}" data-kind="{work_kind(c)}" '
+                + " ".join(f'data-{k}="{(c.get(key) or 0):.2f}"' for k, _, key, _ in WORK_KINDS)
+                + f' data-minted="{(c.get("minted") or 0):.2f}" data-ai="{(a.get("earned") or 0):.2f}"')
+        cells = (f'<td class="numcol">{num(c["minted"])}</td>' + "".join(cell(c, key, k) for k, _, key, _ in WORK_KINDS)
+                 if c else '<td class="numcol muted">—</td>' + '<td class="numcol hide-sm muted">—</td>' * 3)
+        # on a phone the words go under the agent's name, so they show without scrolling the table sideways
+        return (f'<tr class="{"pg-off" if i > WORK_PER else ""}" {data}><td>{tref(t)}'
+                f'{did_pill(c).replace("did ", "did did-sm ", 1)}</td><td>{chip(s)}</td>'
+                f'<td class="hide-sm">{did_pill(c)}</td>{cells}{ai_cell(a)}</tr>')
+    body = "".join(row(i, t, c, a) for i, (t, c, a) in enumerate(rows, 1))
+    dot = lambda k: f'<i class="dot k-{k}" aria-hidden="true"></i>'  # noqa: E731 -- ties a column to its bar above
+    head = (sort_th("name", "Agent") + sort_th("verdict", "Official") + '<th class="hide-sm">What it did</th>'
+            + sort_th("minted", "CREDIT minted", "numcol")
+            + "".join(sort_th(k, dot(k) + label, "numcol hide-sm") for k, label, _, _ in WORK_KINDS)
+            + sort_th("ai", "AI balance earned", "numcol"))
     return f"""<section class="page-head"><p class="kicker">Compute at work</p><h1>What Orbio agents do with their compute budget</h1>
 <p class="sub">An agent’s trading fees pay for its compute twice over. They mint CREDIT to its wallet: Orbio’s unit of AI
 compute, worth $1 of it each, and since 5 October what pays for an agent’s own servers, databases, inboxes and apps. And they
@@ -1491,17 +1553,14 @@ balance only its own account can see, so it shows here only where that account h
 <dl class="tally"><div><dt>agents on the board</dt><dd>{len(rows)}</dd></div>
 <div><dt>CREDIT minted</dt><dd>{num(tot["minted"])}</dd></div>
 <div><dt>put some to work</dt><dd class="ok">{using}</dd></div>
-<div><dt>put to work</dt><dd class="ok">{share(tot["activated"], tot["handled"])}</dd></div>
-<div><dt>still held</dt><dd>{share(tot["held"], tot["handled"])}</dd></div>
-<div><dt>moved out</dt><dd class="warn">{share(tot["moved_out"], tot["handled"])}</dd></div>
 <div><dt>AI balance earned</dt><dd>{usd(earned)}</dd></div>
-<div><dt>spending confirmed</dt><dd class="ok">{len(confirmed)}</dd></div></dl>
-<p class="muted small"><span class="split3 key"><i class="w" style="width:33%"></i><i class="h" style="width:33%"></i><i class="o"
-style="width:34%"></i></span> CREDIT put to work · still held · moved out of the agent wallet</p></section>
-<div class="scroll"><table class="list"><thead><tr><th>Agent</th><th>Official</th><th class="numcol">CREDIT minted</th>
-<th class="numcol">Put to work</th><th class="numcol">Still held</th><th class="numcol">Moved out</th>
-<th class="numcol">AI balance earned</th><th class="hide-sm"></th></tr></thead>
-<tbody>{body or '<tr><td colspan="8" class="muted">No agent has earned compute yet.</td></tr>'}</tbody></table></div>"""
+<div><dt>spending confirmed</dt><dd class="ok">{len(confirmed)}</dd></div></dl></section>
+{where_it_went(tot, kinds) if credit else ""}
+<section class="workboard" aria-labelledby="board-h"><div class="sec-head"><div><h2 id="board-h">Every agent</h2>
+<p class="sub">The biggest share put to work first. Tap a column to sort.</p></div></div>
+<input class="filter" type="search" placeholder="Search by ticker, name, # or address" aria-label="Search the agents by ticker, name, agent number or address">
+<div class="scroll"><table class="list sortable work" data-per="{WORK_PER}" data-label="Pages of agents"><thead><tr>{head}</tr></thead>
+<tbody>{body or '<tr><td colspan="9" class="muted">No agent has earned compute yet.</td></tr>'}</tbody></table></div></section>"""
 
 
 # ----------------------------------------------------------------- Sign in with Orbio apps
@@ -2361,9 +2420,26 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .tally{display:flex;flex-wrap:wrap;gap:10px 36px;margin:28px 0 0}.tally div{display:flex;flex-direction:column-reverse}
 .tally dd{margin:0;font:600 26px/1.1 var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
 .tally dt{font-size:13px;color:var(--muted)}
-.split3{display:inline-flex;width:120px;height:8px;border-radius:4px;overflow:hidden;background:color-mix(in srgb,var(--muted) 18%,transparent);vertical-align:middle}
-.split3 i{display:block;height:100%}.split3 .w{background:var(--ok)}.split3 .h{background:color-mix(in srgb,var(--muted) 55%,transparent)}
-.split3 .o{background:var(--warn)}.split3.key{width:72px;margin-right:6px}
+/* the At work page: one colour per outcome of an agent's CREDIT, the same on its bar, its column and its rows */
+.k-work{--k:var(--ok);--k-bg:var(--ok-bg)}.k-held{--k:var(--ink-2);--k-bg:color-mix(in srgb,var(--muted) 18%,transparent)}
+.k-out{--k:var(--warn);--k-bg:var(--warn-bg)}small.k-work,small.k-held,small.k-out{color:var(--k)}
+.where{margin-top:40px}.where .sub{margin-bottom:16px}
+.wbars{display:grid;grid-template-columns:minmax(0,15rem) minmax(0,1fr) auto auto auto;border-top:1px solid var(--rule)}
+.wrow{display:grid;grid-column:1/-1;grid-template-columns:subgrid;align-items:center;gap:6px 20px;padding:14px 12px;margin:0 -12px;
+  border:0;border-bottom:1px solid var(--rule);border-radius:0;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer}
+.wrow:hover:not(:disabled){background:var(--sheet)}.wrow:disabled{cursor:default}
+.wrow[aria-pressed=true]{background:var(--k-bg);box-shadow:inset 3px 0 0 var(--k)}
+.wl{display:flex;flex-direction:column;gap:2px;min-width:0}.wl b{font:700 16px var(--display)}.wl small{font-size:12.5px;color:var(--muted);line-height:1.35}
+.wtrack{display:block;height:14px;border-radius:7px;background:color-mix(in srgb,var(--muted) 14%,transparent);overflow:hidden}
+.wtrack i{display:block;height:100%;min-width:3px;border-radius:7px;background:var(--k)}
+.wpct{font:700 24px/1 var(--mono);color:var(--k);font-variant-numeric:tabular-nums;text-align:right;min-width:3.2ch}
+.wamt{font:500 14px var(--mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}.wamt small{color:var(--muted);font-size:11px}
+.wn{font-size:13px;color:var(--accent);white-space:nowrap}.wrow:disabled .wn{color:var(--muted)}
+.wrow[aria-pressed=true] .wn{color:var(--k);font-weight:600}
+.workboard{margin-top:44px}.workboard .filter{max-width:460px}
+.did{display:inline-block;font:600 12.5px/1.2 var(--sans);padding:4px 10px;border-radius:999px;white-space:nowrap;background:var(--k-bg);color:var(--k)}
+.did.mixed,.did.none{background:none;border:1px solid var(--rule-2);color:var(--muted);font-weight:500}
+.did-sm{display:none}th .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--k);margin-right:6px;vertical-align:1px}
 .sec-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px 24px;flex-wrap:wrap;margin-bottom:16px}
 .filters{display:flex;gap:6px;flex-wrap:wrap}
 .filters button{font:600 13px var(--sans);display:inline-flex;gap:7px;align-items:center;padding:7px 12px;border-radius:999px;border:1px solid var(--rule-2);background:var(--sheet);color:var(--ink-2);cursor:pointer}
@@ -2981,7 +3057,10 @@ th[data-sort] button{padding:8px 0}
 }
 @media (max-width:560px){.keynums{grid-template-columns:repeat(2,minmax(0,1fr))}.hide-sm{display:none}.stampbox{flex-direction:row;padding:0}
 .stamp.big{font-size:20px;padding:11px 16px 9px}.verdict .why{font-size:17px}.file{padding:18px 16px}.verdict,.project,.score,.safety,.treasury,.evidence{padding:16px}
-.tally{gap:10px 24px}.tally dd{font-size:22px}}
+.tally{gap:10px 24px}.tally dd{font-size:22px}
+.wbars{display:block}.wrow{width:calc(100% + 24px);grid-template-columns:auto minmax(0,1fr) 4.2ch;grid-template-areas:"l l l" "t t p" "a n n";gap:8px 14px}
+.wl{grid-area:l}.wtrack{grid-area:t}.wpct{grid-area:p;font-size:20px}.wamt{grid-area:a;text-align:left}.wn{grid-area:n;text-align:right}
+td .did-sm{display:block;margin-top:6px;width:max-content}}
 """
 DARK = ("--bg:#090d12;--sheet:#10161f;--sheet-2:#151d28;--ink:#e7ecf3;--ink-2:#b4bfcd;--muted:#8792a4;--rule:#212a36;--rule-2:#324050;"
         "--accent:#8fa3ff;--accent-bg:#18214a;--scrim:rgba(6,9,14,.88);"
@@ -3439,10 +3518,18 @@ JS = r"""
       if(top<0)scrollTo({top:top+scrollY-90,behavior:CALM?'auto':'smooth'});return}
     var vw=ev.target.closest('.mapview [data-view]');if(vw){setView(vw.dataset.view);return}
     if(res&&!res.contains(ev.target)&&ev.target!==q)res.hidden=true});
-  document.querySelectorAll('.filter').forEach(function(f){f.addEventListener('input',function(){
-    var v=f.value.trim().toLowerCase(),scope=f.closest('.view')||document;
-    scope.querySelectorAll('[data-search]').forEach(function(r){r.hidden=!!v&&r.dataset.search.indexOf(v)<0});
-    scope.querySelectorAll('[data-per]').forEach(function(x){x.dataset.pg=1;pageList(x)})})});
+  // a page's search box, and its picks (the At work page's bars: data-pick lists the rows whose data-kind matches)
+  function filterRows(scope){var f=scope.querySelector('.filter'),v=f?f.value.trim().toLowerCase():'',
+      pk=scope.querySelector('[data-pick][aria-pressed=true]'),k=pk?pk.dataset.pick:'';
+    scope.querySelectorAll('[data-search]').forEach(function(r){r.hidden=(!!v&&r.dataset.search.indexOf(v)<0)||(!!k&&r.dataset.kind!==k)});
+    scope.querySelectorAll('[data-per]').forEach(function(x){x.dataset.pg=1;pageList(x)})}
+  document.querySelectorAll('.filter').forEach(function(f){f.addEventListener('input',function(){filterRows(f.closest('.view')||document)})});
+  document.addEventListener('click',function(ev){var pk=ev.target.closest('[data-pick]');if(!pk)return;
+    var on=pk.getAttribute('aria-pressed')!=='true',scope=pk.closest('.view')||document;
+    scope.querySelectorAll('[data-pick]').forEach(function(x){x.setAttribute('aria-pressed',x===pk&&on?'true':'false')});
+    filterRows(scope);
+    var tb=scope.querySelector('.workboard');if(on&&tb&&tb.getBoundingClientRect().top>innerHeight*.6)
+      scrollTo({top:tb.getBoundingClientRect().top+scrollY-80,behavior:CALM?'auto':'smooth'})});
   document.addEventListener('paste',function(ev){var t=ev.target;
     if(t&&((t.tagName==='INPUT'&&t!==q)||t.tagName==='TEXTAREA'||t.isContentEditable))return;
     var txt=(ev.clipboardData||window.clipboardData||{getData:function(){return ''}}).getData('text')||'',m=txt.match(/0x[0-9a-fA-F]{40}/);
