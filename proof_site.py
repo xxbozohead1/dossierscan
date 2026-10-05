@@ -1239,8 +1239,8 @@ def verdict_block(t: dict, s: str) -> str:
     bot = bot_username()
     report = (f'<p class="report">Wrong verdict? <a href="https://t.me/{bot}?start=r_{t["token"]}" rel="noopener" target="_blank">'
               "Report it</a>. A person reads every report, and it triggers a fresh check.</p>") if bot else ""
-    return f"""<section class="verdict v-{s}"><h2>Is this the project's token?</h2>
-<p class="why">{e(sentence(v["why"]))}</p>{f'<ul class="receipts">{receipts}</ul>' if receipts else ""}
+    return f"""<section class="verdict v-{s}"><h2>Is this ${e(t.get("symbol") or "?")} the project's token?</h2>
+<p class="why"><strong>{ANSWER[s]}.</strong> {e(sentence(v["why"]))}</p>{f'<ul class="receipts">{receipts}</ul>' if receipts else ""}
 <p class="muted">{STATE_TEXT[s]}</p>{extra}{report}</section>"""
 
 
@@ -3420,9 +3420,57 @@ def set_build(feed: dict) -> None:
 
 
 def token_html(t: dict, feed: dict) -> str:
-    s = STATE[state_of(t, feed["generated_at"])]
-    return page(f'${t["symbol"]}: {s} · {NAME}', token_page(t, feed), feed, 1, f'{s}: {sentence(t["verdict"]["why"])}',
-                path=f't/{t["token"]}.html')
+    s = state_of(t, feed["generated_at"])
+    return page(search_title(t, s), token_page(t, feed), feed, 1, search_desc(t, s), path=f't/{t["token"]}.html')
+
+
+# How a file shows in search results and link previews (user, 5 Oct: Google brought 63 of a day's ~200 readers, landing on
+# token pages). The title and the snippet answer the question people search, "is $X real?", ticker and name first. A red
+# token's title carries its contract: the 69 copies of $LUDI had one title between them ("$LUDI: Impersonator"), and a
+# search engine folds pages that look the same into one result.
+ANSWER = {"verified": "Yes", "scam": "No", "linked": "Unlikely", "checking": "Not yet known", "unverified": "Not confirmed"}
+
+
+def ticker_and_name(t: dict) -> str:
+    """$ERRAND, or $ORDESK (Orbio Research Desk) when the name says more than the ticker."""
+    sym, nm = t.get("symbol") or "?", " ".join((t.get("name") or "").split())
+    plain = lambda x: re.sub(r"\W", "", x.lower())  # noqa: E731
+    return f"${sym}" + ("" if plain(nm) in ("", plain(sym)) else f" ({nm[:40]})")
+
+
+def search_title(t: dict, s: str) -> str:
+    who, ca = ticker_and_name(t), short(t["token"])
+    on = " on Orbio" if t.get("orbio_agent") else ""
+    return {"verified": f"{who}: the official token, verified",
+            "scam": f"{who} {ca}: an impersonator, not the real token",
+            "linked": f"{who} {ca}: launched from an impersonator's wallet",
+            "checking": f"{who} {ca}: not verified yet",
+            "unverified": f"{who} {ca}: not verified",
+            "meme": f"{who}: a meme coin{on}, no project behind it",
+            "tribute": f"{who}: a meme named after @{(t.get('meme') or {}).get('of') or '?'}",
+            "copycat": f"{who} {ca}: a copycat launch of a meme"}[s] + f" · {NAME}"
+
+
+def search_desc(t: dict, s: str) -> str:
+    """The snippet: the question, answered, then why, the real token for a copy, and where it trades."""
+    who = ticker_and_name(t)
+    if s in MEMES:
+        head = f"Is {who} a real project? No: " + {
+            "meme": "it's a meme. It claims no product and no official account, so judge it on who launched it, who "
+                    "bought first and whether holders grow.",
+            "tribute": f"it's a meme named after @{(t.get('meme') or {}).get('of') or '?'}, who hasn't posted it. It turns "
+                       "verified if they post this contract.",
+            "copycat": "it's a later launch of a meme already launched under this name, and the first launch isn't always "
+                       "the one that trades."}[s]
+    else:
+        head = f"Is this {who} the real token? {ANSWER[s]}. {sentence((t.get('verdict') or {}).get('why') or '')}"
+        real = [r for r in (t.get("related") or {}).get("claimed") or [] if r["token"] != t["token"]]
+        if s == "scam" and real:
+            head += f" The real one is ${real[0].get('symbol') or '?'}, {short(real[0]['token'])}."
+    where = (f" Orbio agent #{t['orbio_agent']} on Robinhood Chain" if t.get("orbio_agent") else " On Robinhood Chain") \
+        + f", contract {t['token']}."
+    head = head if len(head) <= 320 - len(where) else head[:320 - len(where) - 1].rsplit(" ", 1)[0] + "…"
+    return head + where
 
 
 def token_json(t: dict, feed: dict) -> str:
@@ -3521,8 +3569,14 @@ def build(feed: dict, out: Path = OUT, tick=None) -> int:
         live_cases = [c for c in CASES if c.get("status") == "published"]  # never a draft, even on the dev server
         pages = ["", "agents.html", "scams.html", "apps.html", "token.html", "method.html", "api.html"] + [f't/{t["token"]}.html' for t in feed["tokens"]] \
             + (["cases.html"] + [f'case/{c["slug"]}.html' for c in live_cases] if live_cases else [])
+        # a file's last change, so a search engine reads a verdict again when it changes: launch, verified or flagged
+        changed = {f't/{t["token"]}.html': max(x or 0 for x in (t.get("launched_at"), (t.get("timeline") or {}).get("verified_at"),
+                                                                 (t.get("timeline") or {}).get("flagged_at")))
+                   for t in feed["tokens"]}
+        stamp = lambda p: (f"<lastmod>{time.strftime('%Y-%m-%d', time.gmtime(changed[p]))}</lastmod>"  # noqa: E731
+                           if changed.get(p) else "")
         (tmp / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-                                         + "".join(f"<url><loc>{e(site)}/{p}</loc></url>\n" for p in pages) + "</urlset>\n", "utf-8")
+                                         + "".join(f"<url><loc>{e(site)}/{p}</loc>{stamp(p)}</url>\n" for p in pages) + "</urlset>\n", "utf-8")
     site_k, keys = site_key(feed), {}
     for t in feed["tokens"]:
         if tick and tick():
