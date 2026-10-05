@@ -1422,6 +1422,12 @@ def owner_rows(t: dict) -> list[tuple[str, str]]:
                      + (f". It shares that wallet with {e(', '.join(cr['shared_with']))}: the wallet’s figures are split by "
                         "what each one’s fees minted" if cr.get("shared_with") else "")
                      + '. <a href="../work.html">Every agent’s CREDIT</a>'))
+    ai = o.get("ai") or {}
+    if ai.get("earned"):
+        rows.append(("ok", f"Its fees have also put {usd(ai['earned'])} into its AI balance, which can only be spent on "
+                           "compute. " + (f"It has used {usd(ai['used'])} of it and has {usd(ai['left'])} left, confirmed "
+                                          "through Orbio" if ai.get("confirmed") else
+                                          "What it has spent of that only its own account can see")))
     return rows
 
 
@@ -1442,39 +1448,60 @@ def credit_bar(c: dict) -> str:
 
 
 def work_page(feed: dict) -> str:
+    """An agent's compute budget, both halves (user, 5 Oct: "build it"): the CREDIT its fees mint to its wallet, and what
+    the wallet did with it; and the USDG its fees put into its AI balance, with what it spent where its own account
+    confirms it ($DOSSIER, through Dossier's key)."""
     now = feed["generated_at"]
-    rows = [(t, (t.get("owner") or {}).get("credit") or {}) for t in feed["tokens"] if t.get("orbio_agent")]
-    rows = [(t, c) for t, c in rows if (c.get("minted") or 0) >= WORK_MIN and c.get("held") is not None]
-    rows.sort(key=lambda x: (-(x[1].get("activated") or 0) / x[1]["minted"], -x[1]["minted"]))
-    tot = {k: sum(c.get(k) or 0 for _, c in rows) for k in ("minted", "activated", "held", "moved_out")}
+    rows = [(t, (t.get("owner") or {}).get("credit") or {}, (t.get("owner") or {}).get("ai") or {})
+            for t in feed["tokens"] if t.get("orbio_agent")]
+    rows = [(t, c if (c.get("minted") or 0) >= WORK_MIN and c.get("held") is not None else {}, a) for t, c, a in rows]
+    rows = [x for x in rows if x[1] or (x[2].get("earned") or 0) >= WORK_MIN]
+    rows.sort(key=lambda x: (-(x[1].get("activated") or 0) / x[1]["minted"] if x[1] else 1,
+                             -((x[1].get("minted") or 0) + (x[2].get("earned") or 0))))
+    credit = [c for _, c, _ in rows if c]
+    tot = {k: sum(c.get(k) or 0 for c in credit) for k in ("minted", "activated", "held", "moved_out")}
     # the tally's three shares add up to 100%: a wallet can put more to work than its fees minted (it bought some)
     tot["handled"] = tot["activated"] + tot["held"] + tot["moved_out"]
+    earned = sum(a.get("earned") or 0 for _, _, a in rows)
+    confirmed = [a for _, _, a in rows if a.get("confirmed")]
     share = lambda x, m: f"{x / m:.0%}" if m else "—"  # noqa: E731
-    using = sum(1 for _, c in rows if (c.get("activated") or 0) > 0)
+    using = sum(1 for c in credit if (c.get("activated") or 0) > 0)
 
     def cell(c: dict, k: str) -> str:
         x = c.get(k) or 0
         return f'<td class="numcol">{num(x)} <small class="muted">{share(x, c["minted"])}</small></td>' if x else \
             '<td class="numcol muted">—</td>'
-    body = "".join(f'<tr><td>{tref(t)}</td><td>{chip(state_of(t, now))}</td><td class="numcol">{num(c["minted"])}</td>'
-                   f'{cell(c, "activated")}{cell(c, "held")}{cell(c, "moved_out")}<td class="hide-sm">{credit_bar(c)}</td></tr>'
-                   for t, c in rows)
-    return f"""<section class="page-head"><p class="kicker">CREDIT at work</p><h1>Which Orbio agents put their CREDIT to work</h1>
-<p class="sub">An agent’s trading fees mint CREDIT to its wallet: Orbio’s unit of AI compute, worth $1 of it each, and since
-5 October what pays for an agent’s own servers, databases, inboxes and apps. The agent puts it to work by activating it. Its
-owner can also hold it, sell it or send it on. This is what each agent wallet did with what it was minted, read from the chain.
-Compute paid from an agent’s USDG AI balance, or CREDIT activated from another wallet, doesn’t show here.</p>
-<dl class="tally"><div><dt>agents minted {WORK_MIN}+ CREDIT</dt><dd>{len(rows)}</dd></div>
-<div><dt>put some to work</dt><dd class="ok">{using}</dd></div>
+
+    def ai_cell(a: dict) -> str:
+        if not a.get("earned"):
+            return '<td class="numcol muted">—</td>'
+        spent = (f' <small class="ok" title="Confirmed through Orbio by the agent’s own account">{usd(a["used"])} used ✓</small>'
+                 if a.get("confirmed") else "")
+        return f'<td class="numcol">{usd(a["earned"])}{spent}</td>'
+    body = "".join(f'<tr><td>{tref(t)}</td><td>{chip(state_of(t, now))}</td>'
+                   + (f'<td class="numcol">{num(c["minted"])}</td>{cell(c, "activated")}{cell(c, "held")}{cell(c, "moved_out")}'
+                      if c else '<td class="numcol muted">—</td>' * 4)
+                   + f'{ai_cell(a)}<td class="hide-sm">{credit_bar(c)}</td></tr>' for t, c, a in rows)
+    return f"""<section class="page-head"><p class="kicker">Compute at work</p><h1>What Orbio agents do with their compute budget</h1>
+<p class="sub">An agent’s trading fees pay for its compute twice over. They mint CREDIT to its wallet: Orbio’s unit of AI
+compute, worth $1 of it each, and since 5 October what pays for an agent’s own servers, databases, inboxes and apps. And they
+put USDG into its AI balance, which can only be spent on compute. What the wallet does with its CREDIT is on the chain: put
+to work by activating it, held, or moved out (sold, sent, or used from another wallet). What an agent spends from its AI
+balance only its own account can see, so it shows here only where that account has confirmed it.</p>
+<dl class="tally"><div><dt>agents on the board</dt><dd>{len(rows)}</dd></div>
 <div><dt>CREDIT minted</dt><dd>{num(tot["minted"])}</dd></div>
+<div><dt>put some to work</dt><dd class="ok">{using}</dd></div>
 <div><dt>put to work</dt><dd class="ok">{share(tot["activated"], tot["handled"])}</dd></div>
 <div><dt>still held</dt><dd>{share(tot["held"], tot["handled"])}</dd></div>
-<div><dt>moved out</dt><dd class="warn">{share(tot["moved_out"], tot["handled"])}</dd></div></dl>
+<div><dt>moved out</dt><dd class="warn">{share(tot["moved_out"], tot["handled"])}</dd></div>
+<div><dt>AI balance earned</dt><dd>{usd(earned)}</dd></div>
+<div><dt>spending confirmed</dt><dd class="ok">{len(confirmed)}</dd></div></dl>
 <p class="muted small"><span class="split3 key"><i class="w" style="width:33%"></i><i class="h" style="width:33%"></i><i class="o"
-style="width:34%"></i></span> put to work · still held · moved out of the agent wallet</p></section>
-<div class="scroll"><table class="list"><thead><tr><th>Agent</th><th>Official</th><th class="numcol">Minted</th>
-<th class="numcol">Put to work</th><th class="numcol">Still held</th><th class="numcol">Moved out</th><th class="hide-sm"></th></tr></thead>
-<tbody>{body or '<tr><td colspan="7" class="muted">No agent has been minted CREDIT yet.</td></tr>'}</tbody></table></div>"""
+style="width:34%"></i></span> CREDIT put to work · still held · moved out of the agent wallet</p></section>
+<div class="scroll"><table class="list"><thead><tr><th>Agent</th><th>Official</th><th class="numcol">CREDIT minted</th>
+<th class="numcol">Put to work</th><th class="numcol">Still held</th><th class="numcol">Moved out</th>
+<th class="numcol">AI balance earned</th><th class="hide-sm"></th></tr></thead>
+<tbody>{body or '<tr><td colspan="8" class="muted">No agent has earned compute yet.</td></tr>'}</tbody></table></div>"""
 
 
 # ----------------------------------------------------------------- Sign in with Orbio apps
@@ -3543,7 +3570,7 @@ def list_pages(feed: dict, home_too: bool = True) -> list[tuple[str, str, str]]:
         ("agents.html", f"Every Orbio agent · {NAME}", agents_page(feed)),
         ("scams.html", f"Impersonators caught · {NAME}", scams_page(feed)),
         ("apps.html", f"Sign in with Orbio apps · {NAME}", apps_page(feed)),
-        ("work.html", f"Which Orbio agents put their CREDIT to work · {NAME}", work_page(feed))]
+        ("work.html", f"What Orbio agents do with their compute budget · {NAME}", work_page(feed))]
 
 
 def replace_text(path: Path, text: str) -> None:
