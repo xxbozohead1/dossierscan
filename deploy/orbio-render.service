@@ -1,0 +1,30 @@
+[Unit]
+Description=Dossier page renderer (headless Chrome behind a Unix socket, deploy/render_server.py)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/orbio/deploy/render_server.py
+Environment=TZ=Asia/Singapore
+# a throwaway user with no access to the indexer's files or keys, on a read-only system
+DynamicUser=yes
+RuntimeDirectory=orbio-render
+RuntimeDirectoryMode=0755
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+MemoryMax=1500M
+TasksMax=512
+# a page can't reach this server's own or private addresses, the cloud metadata service included; DNS goes through
+# the local resolver stub
+IPAddressAllow=127.0.0.53
+IPAddressDeny=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 fc00::/7
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

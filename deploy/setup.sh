@@ -51,8 +51,23 @@ $DIR/data/*.log {
 }
 EOF
 
+# the page renderer (deploy/render_server.py): Chrome's headless build from Google's Chrome for Testing, its libraries,
+# and an AppArmor profile that lets only that binary use user namespaces, so Chrome's sandbox stays on
+if [ ! -x /opt/chrome-headless-shell/chrome-headless-shell ]; then
+    J=$(curl -s https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json)
+    URL=$(echo "$J" | python3 -c "import json,sys; d=json.load(sys.stdin)['channels']['Stable']['downloads']['chrome-headless-shell']; print(next(x['url'] for x in d if x['platform']=='linux64'))")
+    case "$URL" in https://storage.googleapis.com/chrome-for-testing-public/*) ;; *) echo "unexpected Chrome download: $URL"; exit 1;; esac
+    T=$(mktemp -d) && curl -s -o "$T/chs.zip" "$URL" && apt-get install -y -q unzip && unzip -q "$T/chs.zip" -d "$T"
+    rm -rf /opt/chrome-headless-shell && mv "$T/chrome-headless-shell-linux64" /opt/chrome-headless-shell && rm -rf "$T"
+    chmod -R a+rX /opt/chrome-headless-shell
+fi
+apt-get install -y -q libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libx11-6 libxcomposite1 libxdamage1 libxext6 \
+    libxfixes3 libxrandr2 libgbm1 libxcb1 libasound2t64 libatspi2.0-0t64
+install -m 644 "$DIR/deploy/apparmor-chrome-headless-shell" /etc/apparmor.d/chrome-headless-shell
+apparmor_parser -r /etc/apparmor.d/chrome-headless-shell
+
 # the services run on $TZONE (the daily digest's hour is local time); the server's clock stays as it is
-for s in orbio-watch orbio-proof orbio-bot; do
+for s in orbio-watch orbio-proof orbio-bot orbio-render; do
     sed -e "s#/opt/orbio#$DIR#g" -e "s#^Environment=TZ=.*#Environment=TZ=$TZONE#" "$DIR/deploy/$s.service" > "/etc/systemd/system/$s.service"
 done
 systemctl daemon-reload
@@ -81,7 +96,7 @@ echo
 echo "Installed. Next (deploy/HETZNER.md):"
 echo "  - state from the old machine: deploy/push_state.ps1 (Windows)"
 if [ "$CADDY" = 1 ]; then
-    echo "  - then: systemctl enable --now orbio-watch orbio-proof && systemctl restart caddy"
+    echo "  - then: systemctl enable --now orbio-render orbio-watch orbio-proof && systemctl restart caddy"
 else
-    echo "  - then: systemctl enable --now orbio-watch orbio-proof, and point your web server at $DIR/data/site"
+    echo "  - then: systemctl enable --now orbio-render orbio-watch orbio-proof, and point your web server at $DIR/data/site"
 fi
