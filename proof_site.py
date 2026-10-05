@@ -260,7 +260,7 @@ FAVICON = "data:image/svg+xml," + urllib.parse.quote(
     "stroke-linecap='round' stroke-linejoin='round'/></g></svg>", safe=":/=' ")
 LOGO = ROOT / "static" / "logo.png"  # the full seal, 512x512: the $DOSSIER page and the home-screen icon
 NAV = (("index.html#live", "New launches"), ("index.html#board", "Board"), ("scams.html", "Impersonators"),
-       ("apps.html", "Apps"), ("token.html", "$DOSSIER"), ("method.html", "Method"), ("api.html", "API"))
+       ("apps.html", "Apps"), ("work.html", "At work"), ("token.html", "$DOSSIER"), ("method.html", "Method"), ("api.html", "API"))
 
 
 # dark is the default; the switch keeps a viewer's choice of light in this browser. THEME_BOOT sits in <head> and applies
@@ -1412,12 +1412,69 @@ def owner_rows(t: dict) -> list[tuple[str, str]]:
                              f"last {when(ch[-1]['at'])}: it’s now {link(EXPLORER + '/address/' + ch[-1]['addr'], short(ch[-1]['addr']))}"))
     cr = o.get("credit") or {}
     if cr.get("minted"):
-        m, used, held = cr["minted"], cr.get("activated") or 0, cr.get("held")
+        m, used, held, out = cr["minted"], cr.get("activated") or 0, cr.get("held"), cr.get("moved_out") or 0
         rows.append(("ok" if used >= .1 * m else "warn",
                      f"Its fees minted {num(m)} CREDIT to the agent wallet since 1 Oct; it put {num(used) if used else 'none'} "
                      f"to work" + (f" ({used / m:.0%})" if used else "")
-                     + (f", and holds {num(held)}" if held is not None else "")))
+                     + (f", holds {num(held)}" if held is not None else "")
+                     + (f", and {num(out)} ({out / m:.0%}) left the wallet: sold, sent, or used from another wallet"
+                        if out >= max(1, .01 * m) else "")
+                     + (f". It shares that wallet with {e(', '.join(cr['shared_with']))}: the wallet’s figures are split by "
+                        "what each one’s fees minted" if cr.get("shared_with") else "")
+                     + '. <a href="../work.html">Every agent’s CREDIT</a>'))
     return rows
+
+
+# Which agents put the CREDIT their fees mint to work (user, 5 Oct: "start 1 and 2"). Orbio's new tools (servers,
+# databases, inboxes, sandboxes, apps) are paid in CREDIT, and an agent's fees mint it to its wallet, so what the wallet
+# does with it is the public half of "does this agent work?". On 5 Oct 13 agent wallets had ever activated any; $MOONLET's
+# had moved 99% of its 8,313 out. Compute paid from the USDG AI balance, or CREDIT activated from another wallet, is
+# invisible on chain, and the page says so.
+WORK_MIN = 10  # CREDIT: an agent minted less is left off the board
+
+
+def credit_bar(c: dict) -> str:
+    m = c.get("minted") or 0
+    if not m:
+        return ""
+    part = lambda k, cls: f'<i class="{cls}" style="width:{100 * min(1.0, (c.get(k) or 0) / m):.1f}%"></i>'  # noqa: E731
+    return f'<span class="split3" aria-hidden="true">{part("activated", "w")}{part("held", "h")}{part("moved_out", "o")}</span>'
+
+
+def work_page(feed: dict) -> str:
+    now = feed["generated_at"]
+    rows = [(t, (t.get("owner") or {}).get("credit") or {}) for t in feed["tokens"] if t.get("orbio_agent")]
+    rows = [(t, c) for t, c in rows if (c.get("minted") or 0) >= WORK_MIN and c.get("held") is not None]
+    rows.sort(key=lambda x: (-(x[1].get("activated") or 0) / x[1]["minted"], -x[1]["minted"]))
+    tot = {k: sum(c.get(k) or 0 for _, c in rows) for k in ("minted", "activated", "held", "moved_out")}
+    # the tally's three shares add up to 100%: a wallet can put more to work than its fees minted (it bought some)
+    tot["handled"] = tot["activated"] + tot["held"] + tot["moved_out"]
+    share = lambda x, m: f"{x / m:.0%}" if m else "—"  # noqa: E731
+    using = sum(1 for _, c in rows if (c.get("activated") or 0) > 0)
+
+    def cell(c: dict, k: str) -> str:
+        x = c.get(k) or 0
+        return f'<td class="numcol">{num(x)} <small class="muted">{share(x, c["minted"])}</small></td>' if x else \
+            '<td class="numcol muted">—</td>'
+    body = "".join(f'<tr><td>{tref(t)}</td><td>{chip(state_of(t, now))}</td><td class="numcol">{num(c["minted"])}</td>'
+                   f'{cell(c, "activated")}{cell(c, "held")}{cell(c, "moved_out")}<td class="hide-sm">{credit_bar(c)}</td></tr>'
+                   for t, c in rows)
+    return f"""<section class="page-head"><p class="kicker">CREDIT at work</p><h1>Which Orbio agents put their CREDIT to work</h1>
+<p class="sub">An agent’s trading fees mint CREDIT to its wallet: Orbio’s unit of AI compute, worth $1 of it each, and since
+5 October what pays for an agent’s own servers, databases, inboxes and apps. The agent puts it to work by activating it. Its
+owner can also hold it, sell it or send it on. This is what each agent wallet did with what it was minted, read from the chain.
+Compute paid from an agent’s USDG AI balance, or CREDIT activated from another wallet, doesn’t show here.</p>
+<dl class="tally"><div><dt>agents minted {WORK_MIN}+ CREDIT</dt><dd>{len(rows)}</dd></div>
+<div><dt>put some to work</dt><dd class="ok">{using}</dd></div>
+<div><dt>CREDIT minted</dt><dd>{num(tot["minted"])}</dd></div>
+<div><dt>put to work</dt><dd class="ok">{share(tot["activated"], tot["handled"])}</dd></div>
+<div><dt>still held</dt><dd>{share(tot["held"], tot["handled"])}</dd></div>
+<div><dt>moved out</dt><dd class="warn">{share(tot["moved_out"], tot["handled"])}</dd></div></dl>
+<p class="muted small"><span class="split3 key"><i class="w" style="width:33%"></i><i class="h" style="width:33%"></i><i class="o"
+style="width:34%"></i></span> put to work · still held · moved out of the agent wallet</p></section>
+<div class="scroll"><table class="list"><thead><tr><th>Agent</th><th>Official</th><th class="numcol">Minted</th>
+<th class="numcol">Put to work</th><th class="numcol">Still held</th><th class="numcol">Moved out</th><th class="hide-sm"></th></tr></thead>
+<tbody>{body or '<tr><td colspan="7" class="muted">No agent has been minted CREDIT yet.</td></tr>'}</tbody></table></div>"""
 
 
 # ----------------------------------------------------------------- Sign in with Orbio apps
@@ -2277,6 +2334,9 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .tally{display:flex;flex-wrap:wrap;gap:10px 36px;margin:28px 0 0}.tally div{display:flex;flex-direction:column-reverse}
 .tally dd{margin:0;font:600 26px/1.1 var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
 .tally dt{font-size:13px;color:var(--muted)}
+.split3{display:inline-flex;width:120px;height:8px;border-radius:4px;overflow:hidden;background:color-mix(in srgb,var(--muted) 18%,transparent);vertical-align:middle}
+.split3 i{display:block;height:100%}.split3 .w{background:var(--ok)}.split3 .h{background:color-mix(in srgb,var(--muted) 55%,transparent)}
+.split3 .o{background:var(--warn)}.split3.key{width:72px;margin-right:6px}
 .sec-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px 24px;flex-wrap:wrap;margin-bottom:16px}
 .filters{display:flex;gap:6px;flex-wrap:wrap}
 .filters button{font:600 13px var(--sans);display:inline-flex;gap:7px;align-items:center;padding:7px 12px;border-radius:999px;border:1px solid var(--rule-2);background:var(--sheet);color:var(--ink-2);cursor:pointer}
@@ -3482,7 +3542,8 @@ def list_pages(feed: dict, home_too: bool = True) -> list[tuple[str, str, str]]:
     return ([("index.html", f"{NAME}: which Orbio launch is the real one?", home(feed))] if home_too else []) + [
         ("agents.html", f"Every Orbio agent · {NAME}", agents_page(feed)),
         ("scams.html", f"Impersonators caught · {NAME}", scams_page(feed)),
-        ("apps.html", f"Sign in with Orbio apps · {NAME}", apps_page(feed))]
+        ("apps.html", f"Sign in with Orbio apps · {NAME}", apps_page(feed)),
+        ("work.html", f"Which Orbio agents put their CREDIT to work · {NAME}", work_page(feed))]
 
 
 def replace_text(path: Path, text: str) -> None:
@@ -3567,7 +3628,7 @@ def build(feed: dict, out: Path = OUT, tick=None) -> int:
     (tmp / "robots.txt").write_text("User-agent: *\nAllow: /\n" + (f"Sitemap: {site}/sitemap.xml\n" if site else ""), "utf-8")
     if site:
         live_cases = [c for c in CASES if c.get("status") == "published"]  # never a draft, even on the dev server
-        pages = ["", "agents.html", "scams.html", "apps.html", "token.html", "method.html", "api.html"] + [f't/{t["token"]}.html' for t in feed["tokens"]] \
+        pages = ["", "agents.html", "scams.html", "apps.html", "work.html", "token.html", "method.html", "api.html"] + [f't/{t["token"]}.html' for t in feed["tokens"]] \
             + (["cases.html"] + [f'case/{c["slug"]}.html' for c in live_cases] if live_cases else [])
         # a file's last change, so a search engine reads a verdict again when it changes: launch, verified or flagged
         changed = {f't/{t["token"]}.html': max(x or 0 for x in (t.get("launched_at"), (t.get("timeline") or {}).get("verified_at"),
