@@ -78,7 +78,9 @@ FLAGS = {"CREATOR_EXIT": "Creator sold most of their launch buy", "FEE_REDIRECT"
          "LAUNCH_BUNDLE": "Several buyers in the launch block", "SERIAL": "Creator launched 3+ tokens in a day",
          "CONFLICT": "Official channels disagree", "BORROWED": "Points at another organisation's brand",
          "COPIER_CREATOR": "Launched by a wallet that also launched 3+ confirmed copies of other projects",
-         "PRINCIPAL_WITHDRAWN": "The owner took ORBIO out of the agent's stake"}
+         "PRINCIPAL_WITHDRAWN": "The owner took ORBIO out of the agent's stake",
+         "BATCH": "Its account, wallet or a sibling account verified other new tokens within two days",
+         "THIN_CLAIM": "Verified only by an X account with under 25 followers and 10 posts"}
 FONTS = ("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,500..800"
          "&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400..700&display=swap")
 EXPLORER = "https://robin.etherscan.io"
@@ -840,6 +842,11 @@ def card(t: dict, now: int, up: str = "") -> str:
                "copycat": "A later launch of a meme launched before under this name."}[s]
         if m.get("copier_wallet"):
             why += f' <span class="warnline">🚩 From a copier’s wallet.{receipt}</span>'
+    elif s == "verified" and t.get("batch"):
+        b = t["batch"]
+        n = len(b.get("same_account") or []) + len(b.get("same_wallet") or []) + len(b.get("siblings") or [])
+        why += (f' <span class="warnline">⚠️ One of a batch with {plural(n, "other new token")}.</span>' if n else
+                f' <span class="warnline">⚠️ Verified by an account with {b["thin"]["followers"]} followers.</span>')
     return f"""<li class="card" data-t="{t["token"]}" data-lt="{t["launched_at"] or 0}" data-state="{group_of(s)}">
 <div class="card-top"><span class="fileno">{fileno(t)}</span><span class="age">{when(t["launched_at"])}</span>{tools(t["token"])}</div>
 <div class="card-title">{tref(t, up, "tok stretch")}<span data-l="chip">{chip(s)}</span></div>
@@ -865,7 +872,8 @@ DIM_ASK = {"product": "Does something exist, and does it work?", "build": "Is co
            "team": "Is someone accountable?", "work": "Is it doing anything?", "integrity": "Is the token itself sound?"}
 CAUTION = {"CREATOR_EXIT": "Creator sold", "FEE_REDIRECT": "Fees redirected", "LAUNCH_BUNDLE": "Bundled launch",
            "SERIAL": "Serial launcher", "CONFLICT": "Channels disagree", "BORROWED": "Borrowed brand",
-           "COPIER_CREATOR": "Copier's wallet", "PRINCIPAL_WITHDRAWN": "Stake withdrawn"}
+           "COPIER_CREATOR": "Copier's wallet", "PRINCIPAL_WITHDRAWN": "Stake withdrawn", "BATCH": "Part of a batch",
+           "THIN_CLAIM": "Thin account"}
 ICON = {
     "proven": '<circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4.9 8.2l2.1 2.1 4.2-4.5" fill="none" '
               'stroke="var(--sheet)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
@@ -1236,12 +1244,36 @@ def verdict_block(t: dict, s: str) -> str:
     if s == "verified" and real:
         extra += ('<div class="related"><h3>The same team also claims</h3><ul>' + "".join(
             f"<li>{tref(r, '../')}</li>" for r in real) + "</ul></div>")
+    if s == "verified" and t.get("batch"):
+        extra += batch_box(t["batch"], t, "../")
     bot = bot_username()
     report = (f'<p class="report">Wrong verdict? <a href="https://t.me/{bot}?start=r_{t["token"]}" rel="noopener" target="_blank">'
               "Report it</a>. A person reads every report, and it triggers a fresh check.</p>") if bot else ""
     return f"""<section class="verdict v-{s}"><h2>Is this ${e(t.get("symbol") or "?")} the project's token?</h2>
 <p class="why"><strong>{ANSWER[s]}.</strong> {e(sentence(v["why"]))}</p>{f'<ul class="receipts">{receipts}</ul>' if receipts else ""}
 <p class="muted">{STATE_TEXT[s]}</p>{extra}{report}</section>"""
+
+
+def batch_box(b: dict, t: dict, up: str = "") -> str:
+    """"Verified, but…" on a verified file: the other new tokens its account, its launch wallet or accounts created
+    alongside its own verified within two days, and a claiming account that's nearly empty (proof_index.batch_signals)."""
+    ref = lambda x: tref({"token": x["token"], "symbol": x.get("symbol"), "orbio_agent": x.get("vault_id"), "name": None}, up)  # noqa: E731
+    gap = lambda x: fmt_span(abs((x.get("ts") or 0) - (t.get("launched_at") or 0)))  # noqa: E731
+    at = lambda k: "@" + e(k[2:]) if k.startswith("x:") else e(k.split(":", 1)[1])  # noqa: E731
+    items = [f"Its account {at(x['via'])} also verified {ref(x)}, launched {e(gap(x))} apart" for x in b.get("same_account") or []]
+    items += [f"Its launch wallet also launched {ref(x)}, verified by {at(x['via'])}" for x in b.get("same_wallet") or []]
+    items += [f"Its X account {at(x['account'])} was created within the hour of {at(x['via'])}, which verified {ref(x)}"
+              for x in b.get("siblings") or []]
+    if b.get("thin"):
+        th = b["thin"]
+        items.append(f"The only account that verifies it, {at(th['key'])}, has {th['followers']} followers and "
+                     f"{plural(th['posts'], 'post')}")
+    batch = len(items) > (1 if b.get("thin") else 0)
+    head = "Verified, but one of a batch" if batch else "Verified by a near-empty account"
+    why = "one operator can open accounts and verify many tokens" if batch else "anyone can open an account and post a contract"
+    return (f'<div class="related warn"><h3>{head}</h3><ul>' + "".join(f"<li>{x}</li>" for x in items[:8]) + "</ul>"
+            f'<p class="muted">Verified means the token\'s own account or site lists this exact contract. It doesn\'t mean '
+            f"the project is vetted: {why}.</p></div>")
 
 
 def tile(label: str, key: str, cls: str) -> str:
@@ -2777,7 +2809,7 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .verdict{background:var(--sheet);border:1px solid var(--rule);border-radius:14px;padding:20px 22px}
 .verdict .why{font:600 19px/1.4 var(--sans);margin:10px 0 8px;max-width:62ch}.receipts{margin:0 0 10px;padding-left:18px;overflow-wrap:anywhere}
 .related{margin-top:16px;padding-top:14px;border-top:1px dashed var(--rule)}.related h3{margin-top:0}
-.related ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}.related.bad h3{color:var(--bad)}
+.related ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}.related.bad h3{color:var(--bad)}.related.warn h3{color:var(--warn)}
 .cols{display:grid;grid-template-columns:1.25fr 1fr;gap:16px}
 .project,.score,.safety,.treasury{background:var(--sheet);border:1px solid var(--rule);border-radius:14px;padding:20px 22px}
 /* Sign in with Orbio: each app an access pass, its fee on a tear-off stub */
