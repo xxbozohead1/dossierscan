@@ -1278,8 +1278,9 @@ def batch_box(b: dict, t: dict, up: str = "") -> str:
     head = "Verified, but one of a batch" if batch else "Verified by a near-empty account"
     why = "one operator can open accounts and verify many tokens" if batch else "anyone can open an account and post a contract"
     return (f'<div class="related warn"><h3>{head}</h3><ul>' + "".join(f"<li>{x}</li>" for x in items[:8]) + "</ul>"
-            f'<p class="muted">Verified means the token\'s own account or site lists this exact contract. It doesn\'t mean '
-            f"the project is vetted: {why}.</p></div>")
+            f'<p class="muted">Verified means the token\'s own account or site lists this exact contract, but {why}. '
+            f'Vetted means a status of Live or Proven: its own evidence shows something works and someone is accountable '
+            f'(<a href="{up}method.html#1-what-the-score-answers">method</a>).</p></div>')
 
 
 def tile(label: str, key: str, cls: str) -> str:

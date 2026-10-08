@@ -17,6 +17,23 @@ It does not answer "will the price go up". Safety appears only as integrity flag
 Orbio affiliation, Build Week participation and winning are **badges**, not points: they say what a
 project is, not whether it is real.
 
+**Verified and vetted are two different answers.**
+
+- **Verified** answers *whose token is this?* The project's own X account or website lists this exact
+  contract (§3.1). It says nothing about the project or about who runs the account: an account opened or
+  bought for the launch passes.
+- **Vetted** answers *is there a real project behind it?* On Dossier a token is vetted when its status
+  is `LIVE` or `PROVEN` (§5). Its own evidence then shows that something verifiably works (a working app,
+  product output, or outside users of its contracts) and that someone is accountable (a team account
+  that claims it, or code being written). Each point has a receipt (P3).
+
+`PROVEN` adds steady output and an accountable team, held for 7 days in a row. Short of vetted, `BUILDING` means the project claims the token and is
+showing work, but nothing verifiably works yet, and `UNPROVEN` means there is too little to judge.
+
+On 6 Oct, eight small X accounts verified 13 Orbio agents in seven hours, and five of the accounts were
+gone a day later (case file 006). All 13 were verified, and none was vetted: they scored 9 to 25 of
+100, with nothing for product or code.
+
 ## 2. Principles
 
 | # | Principle | Why |
@@ -129,6 +146,12 @@ re-check of `LIVE` tokens (§7), so a token falls only when its checks stop find
 | Site is substantive: ≥150 words of non-boilerplate text, and not a template, "coming soon" or link-in-bio page | 6 |
 | A functional surface reachable from the site (`/app`, `/docs`, an API host, a dashboard, a hash route like `#/board/6`) returns 200 with ≥60 prose words that aren't the homepage again (word-set overlap < 0.8) | 6 |
 | Site content changed in the last 14 days (hash differs) | 6 |
+| Orbio agents: its own launcher contract in use. The contract that launched the agent counts only when the agent is the first it launched. 20+ agents launched through it or 50+ outside callers in 7 days → 18; 3+ or 10+ → 9 | ≤18 |
+
+*Why a contract can be the product (8 Oct):* $ORBANCY #1514 has no website. Its contract launched 34 more
+agents in 30 hours and runs their fees, yet it scored 19 and read `UNPROVEN`. Memes launched through a
+launcher later get none of its credit, and an EIP-7702 account (23 bytes of code) is a wallet, not a
+product.
 
 A page with fewer than 150 prose words is re-read rendered (`web.scrape`) and the richer read is kept.
 Most crypto sites are JS apps whose shell passes any character-count test while showing nothing:
@@ -152,12 +175,14 @@ did).
 | Evidence | Points |
 |---|---|
 | X account `bound` (it posted the CA) | 8 |
-| Account age at launch: ≥90 days → 3, ≥1 year → 5 | ≤5 |
+| Account age at launch: ≥90 days → 3, ≥1 year → 5, once the account has posted ≥50 times | ≤5 |
 | Posted in ≥3 of the last 4 weeks | 3 |
 | Creator (§6.1) first seen ≥90 days before launch on any of robinhood, ethereum, base, arbitrum, optimism, bnb | 4 |
 
 Age is weighed carefully: @PackwoodAPP is a 2025 account with **zero posts**, and seven different
-creators attached it to their tokens. Age without activity or binding is worth little.
+creators attached it to their tokens. Age without activity or binding is worth little. Since 8 Oct, age
+counts only once the account has posted 50 times. Case file 006's accounts were created in 2022 and had
+2 to 9 posts each, which is what an account bought for a launch looks like.
 
 ### 4.4 Work: 0 to 20 · half-life 14 days
 *Is it doing anything?* This is the hardest dimension and the one that matters most.
@@ -203,7 +228,7 @@ one-line read stays on `deepseek/deepseek-v4.1-flash`, which wrote those as well
 
 | Evidence | Points |
 |---|---|
-| Top-10 holders (excluding curve, pool, locker, vault) own <30% → 4, <50% → 2 | ≤4 |
+| Top-10 holders (excluding curve, pool, locker, vault) own <30% → 4, <50% → 2, once ≥20 addresses hold it (a token nobody bought has a perfect spread) | ≤4 |
 | Creator did not exit: sold <50% of their own launch buys within 24h (flag `CREATOR_EXIT`, §6.2) | 3 |
 | No creator-fee recipient change in the first 7 days, and no principal withdrawal at the Orbio cliff | 3 |
 
@@ -234,8 +259,8 @@ What users see first. Derived, mutually exclusive, and evaluated top to bottom:
 | `EXCLUDED` | Failed a funnel predicate; the record is kept, the reason code is public, and it can be appealed |
 | `ABANDONED` | Was `BUILDING` or better, and has had no fresh Product, Build or Team evidence for 30 days |
 | `PROVEN` | Product ≥18, Work ≥10 and Team ≥8, all sustained for 7 consecutive days |
-| `LIVE` | Product ≥18, and Team ≥8 or Build ≥8, **and something verifiably works**: a functional surface, a verified product output, or outside users of its contracts |
-| `BUILDING` | At least one `bound` asset, and composite ≥20 |
+| `LIVE` | Product ≥18, and Team ≥8 or Build ≥8, **and something verifiably works**: a functional surface, a verified product output, outside users of its contracts, or its own launcher contract in use |
+| `BUILDING` | At least one `bound` asset, composite ≥20, **and some work shown**: Product or Build above 0, or something that works |
 | `UNPROVEN` | In the index, with nothing bound yet |
 
 **Badges** (independent of status): `ORBIO AGENT` (vault launch), `BUILD WEEK` (bound to an approved
