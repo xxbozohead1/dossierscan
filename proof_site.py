@@ -395,6 +395,8 @@ def live_data(feed: dict) -> dict:
         row = {"s": state_of(t, now), "sym": t["symbol"], "n": t["name"], "a": t.get("orbio_agent"), "lt": t["launched_at"],
                "why": sentence(t["verdict"]["why"]), "rc": (t["verdict"]["receipts"] or [None])[0],
                "rl": [real[0]["token"], real[0]["symbol"]] if real else None,
+               "sc": round((t.get("scores") or {}).get("composite") or 0) if t.get("scores") else None,
+               "st": (t.get("status") or "").title() or None,
                "m": m.get("mcap_usd"), "p": m.get("price_usd"), "c": m.get("curve_pct"),
                "g": 1 if (m.get("graduated") or t.get("graduated")) else None,
                "v": a.get("vol_24h_usd"), "b": a.get("buys_24h"), "x": a.get("sells_24h"),
@@ -847,6 +849,10 @@ def card(t: dict, now: int, up: str = "") -> str:
         n = len(b.get("same_account") or []) + len(b.get("same_wallet") or []) + len(b.get("siblings") or [])
         why += (f' <span class="warnline">⚠️ One of a batch with {plural(n, "other new token")}.</span>' if n else
                 f' <span class="warnline">⚠️ Verified by an account with {b["thin"]["followers"]} followers.</span>')
+    if s == "verified":  # verified says whose token it is; the score says how much the project has shown (case file 006)
+        sc = t.get("scores")
+        extra = (f'<p class="vread">Score: <b>{e((t.get("status") or "UNPROVEN").title())}</b> · {sc["composite"]:.0f}/100</p>'
+                 if sc else '<p class="vread">Not scored yet: verified isn’t vetted.</p>') + extra
     return f"""<li class="card" data-t="{t["token"]}" data-lt="{t["launched_at"] or 0}" data-state="{group_of(s)}">
 <div class="card-top"><span class="fileno">{fileno(t)}</span><span class="age">{when(t["launched_at"])}</span>{tools(t["token"])}</div>
 <div class="card-title">{tref(t, up, "tok stretch")}<span data-l="chip">{chip(s)}</span></div>
@@ -2526,6 +2532,7 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .card-nums dt{font-size:11.5px;color:var(--muted)}.card-nums dd{margin:0;font:500 14px var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
 .card .why{margin:0;font-size:13.5px;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .card .why .warnline{color:var(--bad);font-weight:600}
+.card .vread{margin:6px 0 0;font:500 12.5px var(--mono);color:var(--muted)}.card .vread b{color:var(--ink-2)}
 .rcpt{font-weight:600;white-space:nowrap}
 .trend{display:flex;align-items:center;gap:12px}.trend .spark{flex:1;min-width:0}.trend .tv{font:500 12.5px var(--mono);text-align:right;white-space:nowrap;color:var(--muted)}
 .trend .tv b{display:block;font-weight:600;font-size:13.5px;color:var(--ink)}.trend .none{flex:1;font-size:12px;color:var(--muted)}
@@ -3202,6 +3209,7 @@ JS = r"""
       '<dl class="card-nums"><div><dt>Market cap</dt><dd data-l="mcap"></dd></div><div><dt>Curve</dt><dd data-l="curve"></dd></div>'+
       '<div><dt>Holders</dt><dd data-l="holders"></dd></div></dl><p class="why">'+esc(r.why)+
       (rc?' <a class="rcpt" href="'+esc(rc)+'" rel="nofollow noopener" target="_blank">Receipt</a>':'')+'</p>'+
+      (s==='verified'?'<p class="vread">'+(r.sc!=null?'Score: <b>'+esc(r.st||'Unproven')+'</b> · '+r.sc+'/100':'Not scored yet: verified isn’t vetted.')+'</p>':'')+
       (s==='scam'&&r.rl?'<p class="real">Real token: <a class="tok inline" href="'+fileHref(r.rl[0])+'"><b>$'+esc(r.rl[1]||'?')+'</b></a></p>':'')+'</li>'}
   function watchList(){try{return JSON.parse(localStorage.getItem('dossier.watch')||'[]')}catch(e){return []}}
   function saveWatch(a){try{localStorage.setItem('dossier.watch',JSON.stringify(a))}catch(e){}}
