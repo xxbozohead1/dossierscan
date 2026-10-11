@@ -29,7 +29,7 @@ Orbio set this split on 1 October for every agent. Before that, 50% was staked, 
 
 Dossier opens a file on every agent launched on Orbio. In a launch's first six hours it looks for the project's
 official post every minute. After that it re-checks at set intervals for three days, refreshes the whole file daily
-for the first week, and keeps scoring what the project ships. Each check reads the project's X account and website and asks one question: do they list this exact
+in its first week while people trade it, and keeps scoring what the project ships. Each check reads the project's X account and website and asks one question: do they list this exact
 contract? Every one of those reads is a paid call, and the ledger below shows what they cost each day.
 
 More fees buy more checking:
@@ -39,9 +39,10 @@ More fees buy more checking:
 
 ## Passes
 
-The website stays free. The Dossier bot, opening soon on Telegram, will sell a pass: unlimited lookups, a fresh
-re-check on demand, and a message the moment a watched token's verdict lands. Passes will be priced in dollars and
-paid in $DOSSIER at the live price.
+The website stays free. The Dossier bot on Telegram checks any Robinhood Chain token you send it, three lookups a day
+for free. A pass, coming soon, adds up to 300 lookups a day, a fresh re-check on demand, the trader's card, and a
+message the moment a watched token's verdict lands. Passes will be priced in dollars and paid in $DOSSIER at the live
+price.
 
 @@passes@@
 
