@@ -39,8 +39,8 @@ More fees buy more checking:
 
 ## Passes
 
-The website stays free. The Dossier bot on Telegram checks any Robinhood Chain token you send it, three lookups a day
-for free. A pass, coming soon, adds up to 300 lookups a day, a fresh re-check on demand, the trader's card, and a
+The website stays free. The Dossier bot on Telegram checks any token launched on Pons, Orbio's agents included, three
+lookups a day for free. A pass, coming soon, adds up to 300 lookups a day, a fresh re-check on demand, the trader's card, and a
 message the moment a watched token's verdict lands. Passes will be priced in dollars and paid in $DOSSIER at the live
 price.
 
