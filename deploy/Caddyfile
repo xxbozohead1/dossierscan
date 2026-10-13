@@ -77,7 +77,10 @@ dossier.example.com {
 			expression {err.status_code} >= 502
 		}
 		handle @gatedown {
-			file_server
+			# an error route keeps the error's status unless told otherwise: the file answers 200
+			file_server {
+				status 200
+			}
 		}
 		@missing expression {err.status_code} == 404
 		handle @missing {
