@@ -28,9 +28,10 @@ Orbio set this split on 1 October for every agent. Before that, 50% was staked, 
 ## What the compute pays for
 
 Dossier opens a file on every agent launched on Orbio. In a launch's first six hours it looks for the project's
-official post every minute. After that it re-checks at set intervals for three days, refreshes the whole file daily
-in its first week while people trade it, and keeps scoring what the project ships. Each check reads the project's X account and website and asks one question: do they list this exact
-contract? Every one of those reads is a paid call, and the ledger below shows what they cost each day.
+official post every minute, and it re-checks throughout the first day. After that it reads a file again while people
+use it: when someone opens it or looks the token up, or while the token trades. Each check reads the project's X account
+and website and asks one question: do they list this exact contract? Every one of those reads is a paid call, and the
+ledger below shows what they cost each day.
 
 More fees buy more checking:
 - more minutes of watching right after launch, when most of the trading happens;

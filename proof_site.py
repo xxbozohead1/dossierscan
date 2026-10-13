@@ -1823,12 +1823,17 @@ def identities(t: dict) -> str:
     role = {"twitter": "X account", "website": "Website", "repo": "Code", "github": "Code"}
     rows = "".join(f"""<tr><td>{role.get(i["role"], e(i["role"]))}</td><td class="wrapcell">{link(i["url"])}</td>
 <td><span class="lvl l-{e((i["binding"] or "unbound").replace("·", "-"))}">{e(i["binding"] or "not checked")}</span>
-<span class="muted hide-sm"> {e(LEVEL_TEXT.get(i["binding"] or "", ""))}</span></td></tr>""" for i in t.get("identities") or [])
+<span class="muted hide-sm"> {e(LEVEL_TEXT.get(i["binding"] or "", ""))}</span>
+{f'<div class="rd muted">read {when(i["read_at"])}</div>' if i.get("read_at") else ""}</td>
+<td class="muted hide-sm">{when(i.get("read_at"), "not yet" if i["role"] in ("twitter", "website") else "—")}</td></tr>"""
+                   for i in t.get("identities") or [])
     if not rows:
         return ""
     return f"""<section><h2>Who it points at</h2><p class="sub">The accounts and sites in the token's own metadata, and whether each
-one claims this token. Metadata is written by the launcher, so only the claim counts.</p>
-<div class="scroll"><table class="list"><thead><tr><th>Kind</th><th>Link</th><th>Claims it?</th></tr></thead>
+one claims this token. Metadata is written by the launcher, so only the claim counts. Dossier reads them throughout a
+launch's first day. After that it reads them again while people trade the token or look at its file: opening a file last
+read over a day ago queues a fresh read.</p>
+<div class="scroll"><table class="list"><thead><tr><th>Kind</th><th>Link</th><th>Claims it?</th><th class="hide-sm">Last read</th></tr></thead>
 <tbody>{rows}</tbody></table></div></section>"""
 
 
@@ -3108,7 +3113,8 @@ th[data-sort] button{padding:8px 0}
 .lineup a{width:34px;height:34px}
 .list th,.list td{padding:10px 8px}.list .chip{font-size:10px;padding:3px 7px;letter-spacing:.03em}.list .status{font-size:10px;padding:2px 6px}.notfound .more a{display:inline-block;padding:8px 2px}.list th.num,.list td.num{padding-right:2px}
 }
-@media (max-width:560px){.keynums{grid-template-columns:repeat(2,minmax(0,1fr))}.hide-sm{display:none}.stampbox{flex-direction:row;padding:0}
+.rd{display:none;margin-top:3px;font-size:12.5px}
+@media (max-width:560px){.keynums{grid-template-columns:repeat(2,minmax(0,1fr))}.hide-sm{display:none}.rd{display:block}.stampbox{flex-direction:row;padding:0}
 .stamp.big{font-size:20px;padding:11px 16px 9px}.verdict .why{font-size:17px}.file{padding:18px 16px}.verdict,.project,.score,.safety,.treasury,.evidence{padding:16px}
 .tally{gap:10px 24px}.tally dd{font-size:22px}
 .wbars{display:block}.wrow{width:calc(100% + 24px);grid-template-columns:auto minmax(0,1fr) 4.2ch;grid-template-areas:"l l l" "t t p" "a n n";gap:8px 14px}

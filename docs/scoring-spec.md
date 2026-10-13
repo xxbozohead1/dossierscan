@@ -378,6 +378,14 @@ dimensions in §4.
 | `ABANDONED` | weekly | weekly | weekly | weekly | weekly |
 | `EXCLUDED`, `CLONE` | re-entry triggers only | | | | |
 
+**On demand (since 13 October 2026).** After a token's first day, the scheduled refreshes above run only while its
+file is in use: a reader opened its page or API record in the last 24 hours, the bot looked it up or answered it in a
+group, someone watches it, or its bonding curve moved at least 0.5 points (a graduated token: its market cap moved 5%).
+A file someone opens whose X account and site were last read over a day ago is refreshed at once, up to 40 a day. Each
+file shows when its accounts and sites were last read. The daily claim check of verified tokens still covers every
+token. In the three days before the change, 58–61% of the spend on account reads went to files over a day old that
+nobody opened or traded.
+
 Each refresh is one dossier covering every dimension. Refreshing every Orbio agent daily, as first
 drafted, would spend the whole default budget on vault memes. Measured: **~$0.003–0.005 and ~15–20 s
 per dossier**, most of it under the self-imposed 60 requests/min.
