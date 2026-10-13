@@ -11,6 +11,13 @@ dossier.example.com {
 
 	# the free API: readable from any site
 	header /api/* Access-Control-Allow-Origin "*"
+	# ...through its gate (deploy/api_gate.py, the orbio-api service): a daily limit for callers without a key, free keys
+	# from the bot. The numbers every page polls skip it. If the gate is down, handle_errors serves the file itself
+	@gated {
+		path /api/*
+		not path /api/v1/live.json /api/v1/live.js
+	}
+	reverse_proxy @gated unix//run/orbio-api/api.sock
 	# the numbers every page loads and polls each minute, rewritten on every pass. "private" matters: for a .js file
 	# Cloudflare replaces a short max-age (even no-cache) with its Browser Cache TTL, 4 hours by default, and browsers
 	# then showed market caps hours old on a refresh. It leaves private alone and doesn't cache at the edge; no-cache
@@ -51,6 +58,11 @@ dossier.example.com {
 				request>headers>Cf-Connecting-Ipv6 delete
 				request>headers>Cf-Pseudo-Ipv4 delete
 				request>headers>Cookie delete
+				# an API key, sent either way, is never written down
+				request>headers>X-Dossier-Key delete
+				request>uri query {
+					delete key
+				}
 				request>tls delete
 				resp_headers delete
 			}
@@ -59,6 +71,14 @@ dossier.example.com {
 
 	# only data/site is served: the index's database, logs and .env sit outside the root
 	handle_errors {
+		# the API gate is down: serve the file without it, so a gate that fails, fails open
+		@gatedown {
+			path /api/*
+			expression {err.status_code} >= 502
+		}
+		handle @gatedown {
+			file_server
+		}
 		@missing expression {err.status_code} == 404
 		handle @missing {
 			rewrite * /404.html

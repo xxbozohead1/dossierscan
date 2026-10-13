@@ -2288,8 +2288,14 @@ def method_page() -> str:
 
 def api_page(feed: dict) -> str:
     sample = feed["tokens"][0]["token"] if feed["tokens"] else "0x…"
-    return f"""<article class="prose"><h1>API</h1><p>Everything on {NAME} is also plain JSON, free and without a key. It's rebuilt
-from the index every few minutes, and every score line carries its source and time.</p>
+    return f"""<article class="prose"><h1>API</h1><p>Everything on {NAME} is also plain JSON, and free. It's rebuilt from the index
+every few minutes, and every score line carries its source and time.</p>
+<h2>Keys and limits</h2><p>Without a key, each network gets a daily allowance (UTC days): 24 calls to <code>feed.json</code>, 200
+token records and 200 calls to <code>summary.json</code>. A key lifts it, and it's free: send
+<a href="https://t.me/dossierscanbot?start=apikey" rel="noopener" target="_blank"><code>/apikey your project · how to reach you</code></a>
+to {NAME}'s bot. Send the key in an <code>X-Dossier-Key</code> header (or <code>?key=</code>). With a key we know who builds on
+{NAME}, and we tell you before anything changes. Past the allowance the API answers 429, with how to get a key. <code>live.json</code>
+has no limit.</p>
 <h2>Endpoints</h2><div class="scroll"><table class="list md"><thead><tr><th>Path</th><th>What</th></tr></thead><tbody>
 <tr><td><a href="api/v1/feed.json"><code>api/v1/feed.json</code></a></td><td>Every token on file: verdict with receipts, status,
 scores, market and treasury, related tokens, identities and the evidence behind each score line.</td></tr>

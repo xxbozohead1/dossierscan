@@ -67,9 +67,11 @@ install -m 644 "$DIR/deploy/apparmor-chrome-headless-shell" /etc/apparmor.d/chro
 apparmor_parser -r /etc/apparmor.d/chrome-headless-shell
 
 # the services run on $TZONE (the daily digest's hour is local time); the server's clock stays as it is
-for s in orbio-watch orbio-proof orbio-bot orbio-render; do
+for s in orbio-watch orbio-proof orbio-bot orbio-render orbio-api; do
     sed -e "s#/opt/orbio#$DIR#g" -e "s#^Environment=TZ=.*#Environment=TZ=$TZONE#" "$DIR/deploy/$s.service" > "/etc/systemd/system/$s.service"
 done
+# the API gate (deploy/api_gate.py) keeps its keys and counts here; the bot writes keys too
+install -d -o orbio -g orbio "$DIR/data/api"
 systemctl daemon-reload
 
 if [ "$CADDY" = 1 ]; then
@@ -96,7 +98,7 @@ echo
 echo "Installed. Next (deploy/HETZNER.md):"
 echo "  - state from the old machine: deploy/push_state.ps1 (Windows)"
 if [ "$CADDY" = 1 ]; then
-    echo "  - then: systemctl enable --now orbio-render orbio-watch orbio-proof && systemctl restart caddy"
+    echo "  - then: systemctl enable --now orbio-render orbio-api orbio-watch orbio-proof && systemctl restart caddy"
 else
-    echo "  - then: systemctl enable --now orbio-render orbio-watch orbio-proof, and point your web server at $DIR/data/site"
+    echo "  - then: systemctl enable --now orbio-render orbio-api orbio-watch orbio-proof, and point your web server at $DIR/data/site"
 fi

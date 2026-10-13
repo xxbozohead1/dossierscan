@@ -1,0 +1,33 @@
+# The free API's gate (deploy/api_gate.py): serves data/site/api behind Caddy, a daily limit for callers without a key,
+# free keys from the bot. Installed by deploy/setup.sh, which replaces /opt/orbio with the checkout's real path.
+[Unit]
+Description=Dossier API gate (deploy/api_gate.py, behind Caddy on a Unix socket)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=orbio
+ExecStart=/usr/bin/python3 /opt/orbio/deploy/api_gate.py
+Environment=TZ=Etc/UTC
+Environment=API_GATE_ROOT=/opt/orbio/data/site
+Environment=API_GATE_DB=/opt/orbio/data/api/api.db
+# per-server settings (API_GATE_TRUSTED_UA), kept out of the repo
+EnvironmentFile=-/opt/orbio/data/api/gate.env
+RuntimeDirectory=orbio-api
+RuntimeDirectoryMode=0755
+# reads the site, writes only its own counts; no network beyond the socket Caddy talks to
+ProtectSystem=strict
+ReadWritePaths=/opt/orbio/data/api
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+IPAddressDeny=any
+MemoryMax=300M
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
