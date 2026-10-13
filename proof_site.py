@@ -2291,7 +2291,8 @@ def api_page(feed: dict) -> str:
     return f"""<article class="prose"><h1>API</h1><p>Everything on {NAME} is also plain JSON, and free. It's rebuilt from the index
 every few minutes, and every score line carries its source and time.</p>
 <h2>Keys and limits</h2><p>Without a key, each network gets a daily allowance (UTC days): 24 calls to <code>feed.json</code>, 200
-token records and 200 calls to <code>summary.json</code>. A key lifts it, and it's free: send
+token records and 200 calls to <code>summary.json</code>; and each tool, by its user agent, gets 48 calls to
+<code>feed.json</code> a day across every network. A key lifts both, and it's free: send
 <a href="https://t.me/dossierscanbot?start=apikey" rel="noopener" target="_blank"><code>/apikey your project · how to reach you</code></a>
 to {NAME}'s bot. Send the key in an <code>X-Dossier-Key</code> header (or <code>?key=</code>). With a key we know who builds on
 {NAME}, and we tell you before anything changes. Past the allowance the API answers 429, with how to get a key. <code>live.json</code>
