@@ -2297,8 +2297,9 @@ token records and 200 calls to <code>summary.json</code>; and each tool, by its 
 to {NAME}'s bot. Send the key in an <code>X-Dossier-Key</code> header (or <code>?key=</code>). With a key we know who builds on
 {NAME}, and we tell you before anything changes. Past the allowance the API answers 429, with how to get a key. <code>live.json</code>
 has no limit.</p>
-<p><b>Any token, on request.</b> The site carries Orbio agents and the tokens projects claim. With a key, you can also ask for
-<code>api/v1/tokens/&lt;address&gt;.json</code> of any other token launched on Robinhood Chain. The first request answers 202 with
+<p><b>Any Pons launch, on request.</b> The site carries Orbio agents and the tokens projects claim. With a key, you can also ask for
+<code>api/v1/tokens/&lt;address&gt;.json</code> of any other token launched on Pons, the launchpad behind Orbio and most launches on
+Robinhood Chain. The first request answers 202 with
 <code>"status": "checking"</code> while {NAME} reads the project's X account and site; ask the same URL again and the file is there,
 usually within a minute, in the same shape with <code>"on_demand": true</code>. A key can ask for 25 checks a day, and an address
 that isn't a launch doesn't count. An unverified token's file gives <code>recheck_after</code>, 6 hours after its channels were
