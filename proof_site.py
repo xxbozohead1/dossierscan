@@ -166,13 +166,28 @@ def num(x, unit: str = "") -> str:
     return s + (f" {unit}" if unit else "")
 
 
+LISTED_TIP = "Listed on Orbio, not launched through its launchpad: it trades on a pool, with no bonding curve"
+
+
+def is_agent(t: dict) -> bool:
+    """An Orbio agent: launched through its launchpad (orbio_agent, its number) or listed by Orbio (orbio_listed)."""
+    return bool(t.get("orbio_agent") or t.get("orbio_listed"))
+
+
+def agent_no(x: dict) -> str:
+    """"#1514" for an agent Orbio launched, "listed" for one it listed, "" for any other token. `x` is a file
+    (orbio_agent, orbio_listed) or an entry of a lineup or a wave (vault_id, listed)."""
+    n = x.get("orbio_agent") or x.get("vault_id")
+    return f"#{n}" if n else "listed" if x.get("orbio_listed") or x.get("listed") else ""
+
+
 def state_of(t: dict, now: int) -> str:
     v = t["verdict"]["verdict"]
     if t.get("meme"):  # unverified, or red only for its wallet, and claims no project (proof_index.meme_label)
         return t["meme"]["kind"]
     if v == "scam" and t["verdict"].get("kind") == "linked":
         return "linked"
-    if v == "unverified" and t.get("orbio_agent") and now - (t.get("launched_at") or 0) < CHECKING_FOR:
+    if v == "unverified" and is_agent(t) and now - (t.get("launched_at") or 0) < CHECKING_FOR:
         return "checking"
     return v
 
@@ -203,6 +218,8 @@ def curve(t: dict) -> str:
     m = t.get("market") or {}
     if m.get("graduated") or t.get("graduated"):
         return '<span class="grad">Graduated</span>'
+    if t.get("orbio_listed"):
+        return f'<span class="grad" title="{LISTED_TIP}">Listed</span>'
     if m.get("curve_pct") is None:
         return "—"
     pct = m["curve_pct"]
@@ -210,7 +227,7 @@ def curve(t: dict) -> str:
 
 
 def fileno(t: dict) -> str:
-    return f'File {t["orbio_agent"]}' if t.get("orbio_agent") else "Pons launch"
+    return f'File {t["orbio_agent"]}' if t.get("orbio_agent") else "Listed on Orbio" if t.get("orbio_listed") else "Pons launch"
 
 
 ON_FILE: set[str] = set()  # tokens with a page in this build; set by build() and build_single()
@@ -219,7 +236,7 @@ ON_FILE: set[str] = set()  # tokens with a page in this build; set by build() an
 def tref(t: dict, up: str = "", cls: str = "tok") -> str:
     """A link to the token's file, or to the explorer for a token the index has no file on (a contract a project
     posted that the index never read)."""
-    agent = f' <span class="no">#{t["orbio_agent"]}</span>' if t.get("orbio_agent") else ""
+    agent = f' <span class="no">{agent_no(t)}</span>' if agent_no(t) else ""
     inner = f'<b>${e(t["symbol"] or short(t["token"]))}</b>{agent}' + (f' <span class="nm">{e(t["name"])}</span>' if t.get("name") else "")
     if ON_FILE and t["token"] not in ON_FILE:
         return f'<a class="{cls}" href="{EXPLORER}/token/{e(t["token"])}" rel="nofollow noopener" target="_blank">{inner}</a>'
@@ -392,7 +409,8 @@ def live_data(feed: dict) -> dict:
         m, a, tr = t.get("market") or {}, t.get("activity") or {}, t.get("treasury") or {}
         h, hk = holders_now(t)
         real = [x for x in ((t.get("related") or {}).get("claimed") or []) if x["token"] != t["token"]]
-        row = {"s": state_of(t, now), "sym": t["symbol"], "n": t["name"], "a": t.get("orbio_agent"), "lt": t["launched_at"],
+        row = {"s": state_of(t, now), "sym": t["symbol"], "n": t["name"], "a": t.get("orbio_agent"),
+               "l": 1 if t.get("orbio_listed") else None, "lt": t["launched_at"],
                "why": sentence(t["verdict"]["why"]), "rc": (t["verdict"]["receipts"] or [None])[0],
                "rl": [real[0]["token"], real[0]["symbol"]] if real else None,
                "sc": round((t.get("scores") or {}).get("composite") or 0) if t.get("scores") else None,
@@ -513,7 +531,7 @@ def biggest(ts: list[dict], base: float = 0.0, n: int = TOP_MAP) -> list[dict]:
     """The Orbio agents worth the most right now, of any age: the map's second view, so a $1M agent from last week
     isn't missing from a page whose map shows only the last 48 hours. Only agents worth a fifth more than every launch
     starts at: below that the list fills up with launches nobody has traded."""
-    big = [t for t in ts if t.get("orbio_agent") and ((t.get("market") or {}).get("mcap_usd") or 0) > max(0.0, base) * 1.2]
+    big = [t for t in ts if is_agent(t) and ((t.get("market") or {}).get("mcap_usd") or 0) > max(0.0, base) * 1.2]
     return sorted(big, key=lambda t: -t["market"]["mcap_usd"])[:n]
 
 
@@ -535,7 +553,7 @@ def map_notes(t: dict, now: int) -> list[list[str]]:
     elif tk:
         f = tk["first"] or {}
         head.append(["ok" if s == "verified" else "warn", f"{ordinal(tk['rank'])} ${sym}: the first"
-                     + (f" (#{f['vault_id']})" if f.get("vault_id") else "")
+                     + (f" ({agent_no(f)})" if agent_no(f) else "")
                      + f" launched {fmt_span((t['launched_at'] or 0) - (f.get('ts') or 0))} earlier" + where_launched(f)])
     ln, dev = tc.get("launch") or {}, tc.get("dev") or {}
     if (ln.get("launch_block_buyers") or 0) >= 3:
@@ -703,7 +721,7 @@ def map_svg(ts: list[dict], now: int, size, mode: str = "new", base: float = 0.0
         for t, x, y, r in inner:
             s = state_of(t, now)
             mc = (t.get("market") or {}).get("mcap_usd")
-            tip = f'${t["symbol"] or "?"}' + (f' #{t["orbio_agent"]}' if t.get("orbio_agent") else "") + f" · {STATE[s]}"                 + (f" · {usd(mc)} market cap" if mc else "")
+            tip = f'${t["symbol"] or "?"}' + (f" {agent_no(t)}" if agent_no(t) else "") + f" · {STATE[s]}"                 + (f" · {usd(mc)} market cap" if mc else "")
             label = (f'<text class="d" x="{x:.1f}" y="{y:.1f}" style="font-size:{min(13, r * .42):.1f}px">'
                      f'{e((t["symbol"] or "?")[:8 if r >= 34 else 7])}</text>') if r >= 17 else ""
             if r >= 30:  # a phone shows the map at about half size: only big bubbles get a (bigger) label there
@@ -734,7 +752,7 @@ def lineup(t: dict) -> str:
         return ""
     dots = []
     for i, f in enumerate(fam, 1):
-        tip = f'{ordinal(i)} ${t["symbol"] or "?"}' + (f' · #{f["vault_id"]}' if f.get("vault_id") else "") + f' · {STATE[f["state"]]}'
+        tip = f'{ordinal(i)} ${t["symbol"] or "?"}' + (f" · {agent_no(f)}" if agent_no(f) else "") + f' · {STATE[f["state"]]}'
         href = f'../t/{f["token"]}.html' if not ON_FILE or f["token"] in ON_FILE else f'{EXPLORER}/token/{f["token"]}'
         dots.append(f'<a class="v-{f["state"]}{" me" if f["token"] == t["token"] else ""}" href="{e(href)}" title="{e(tip)}">{i}</a>')
     return (f'<div class="lineup" aria-label="Every token named ${e(t["symbol"] or "?")}, in launch order">{"".join(dots)}</div>'
@@ -745,14 +763,15 @@ def lineup(t: dict) -> str:
 
 def home(feed: dict) -> str:
     toks, now = feed["tokens"], feed["generated_at"]
-    orbio = [t for t in toks if t.get("orbio_agent")]
+    orbio = [t for t in toks if is_agent(t)]
     verified = sum(1 for t in orbio if t["verdict"]["verdict"] == "verified")
     scams = sorted((t for t in toks if state_of(t, now) in RED), key=lambda t: -(t["launched_at"] or 0))
     board = sorted((t for t in toks if t["status"] in ("PROVEN", "LIVE", "BUILDING")), key=rank)
     recent = sorted((t for t in orbio if (t["launched_at"] or 0) >= now - 2 * DAY), key=lambda t: -(t["launched_at"] or 0))
     base = start_mcap(toks)
     index = inert(json.dumps([{"t": t["token"], "s": t["symbol"], "n": t["name"], "a": t.get("orbio_agent"),
-                               "k": state_of(t, now)} for t in toks], separators=(",", ":")))
+                               **({"l": 1} if t.get("orbio_listed") else {}), "k": state_of(t, now)} for t in toks],
+                             separators=(",", ":")))
     counts = {s: sum(1 for t in recent if state_of(t, now) == s) for s in STATE}
     filters = "".join(f'<button type="button" data-filter="{k}" aria-pressed="{"true" if k == "all" else "false"}">{label}'
                       f'<span>{n}</span></button>' for k, label, n in (
@@ -760,7 +779,7 @@ def home(feed: dict) -> str:
                           ("checking", "Checking", counts["checking"] + counts["unverified"]),
                           ("meme", "Memes", sum(counts[s] for s in MEMES)), ("scam", "Impersonators", counts["scam"] + counts["linked"])))
     # scams also holds copies launched straight on Pons, off the launchpad: next to the agent count, count agents only
-    orbio_scams = sum(1 for t in scams if t.get("orbio_agent"))
+    orbio_scams = sum(1 for t in scams if is_agent(t))
     tally = [(e(len(orbio)), "Orbio agents on file"), (e(verified), "verified by their project"),
              (e(orbio_scams), "Orbio impersonators caught")]
     sp = feed.get("speed") or {}
@@ -813,13 +832,14 @@ project's post every minute.</p></div>
 
 
 def where_launched(f: dict) -> str:
-    """", straight on Pons" for a first token that isn't an Orbio agent: it's not in the Orbio feed, so say where it is."""
-    return "" if f.get("vault_id") else ", straight on Pons"
+    """", straight on Pons" for a first token that isn't an Orbio agent: it's not in the Orbio feed, so say where it is;
+    ", listed on Orbio" for one Orbio listed without launching it."""
+    return "" if f.get("vault_id") else ", listed on Orbio" if f.get("listed") else ", straight on Pons"
 
 
 def first_link(f: dict, up: str = "") -> str:
     """"the first", linked to its file when it has one here, else to the explorer."""
-    label = "the first" + (f" (#{e(f['vault_id'])})" if f.get("vault_id") else "")
+    label = "the first" + (f" ({e(agent_no(f))})" if agent_no(f) else "")
     if f.get("token") and (not ON_FILE or f["token"] in ON_FILE):
         return f'<a href="{up}t/{e(f["token"])}.html">{label}</a>'
     return link(f"{EXPLORER}/token/{f['token']}", f"{label} ↗") if f.get("token") else label
@@ -1003,8 +1023,8 @@ def scam_reason(t: dict, up: str = "") -> tuple[str, str]:
     rc = "".join(f" {link(u, 'Receipt', 'rcpt')}" for u in (v.get("receipts") or [])[:1])
     if v.get("kind") == "linked":
         via = v.get("via") or {}
-        ref = (tref({"token": via["token"], "symbol": via.get("symbol"), "orbio_agent": via.get("vault_id"), "name": None},
-                    up, "tok inline") if via.get("token") else "a confirmed copy")
+        ref = (tref({"token": via["token"], "symbol": via.get("symbol"), "orbio_agent": via.get("vault_id"),
+                     "orbio_listed": via.get("listed"), "name": None}, up, "tok inline") if via.get("token") else "a confirmed copy")
         if "the same wallet launched" in why:
             return "wallet", f"The wallet that launched it also launched {ref}, a confirmed copy."
         m = re.search(r"and (\d+) other confirmed cop", why)
@@ -1079,7 +1099,8 @@ def sort_th(key: str, label: str, cls: str = "", order: str = "", tip: str = "")
 
 def agents_page(feed: dict) -> str:
     now = feed["generated_at"]
-    orbio = sorted((t for t in feed["tokens"] if t.get("orbio_agent")), key=lambda t: -(t["orbio_agent"] or 0))
+    orbio = sorted((t for t in feed["tokens"] if is_agent(t)), key=lambda t: (-(t["launched_at"] or 0), -(t["orbio_agent"] or 0)))
+    listed = sum(1 for t in orbio if not t.get("orbio_agent"))
     rows = "".join(f"""<tr data-t="{t["token"]}" data-lt="{t["launched_at"] or 0}" data-sym="{e((t["symbol"] or "").lower())}"
 data-state="{state_of(t, now)}" data-search="{e(search_key(t))}"><td>{tref(t)}</td><td><span data-l="chip">{chip(state_of(t, now))}</span></td>
 <td class="hide-sm">{status_chip(t["status"])}</td><td class="numcol">{ph("mcap")}</td><td class="numcol hide-sm">{ph("vol")}</td>
@@ -1089,8 +1110,10 @@ data-state="{state_of(t, now)}" data-search="{e(search_key(t))}"><td>{tref(t)}</
     head = (sort_th("name", "Token") + sort_th("verdict", "Official") + '<th class="hide-sm">Status</th>' + sort_th("mcap", "Mkt cap", "numcol")
             + sort_th("vol", "24h vol", "numcol hide-sm") + sort_th("curve", "Curve", "hide-sm")
             + sort_th("age", "Launched", "hide-sm") + '<th class="hide-sm"><span class="sr">Watch</span></th>')
-    return f"""<section class="page-head"><h1>Every Orbio agent on file</h1><p class="sub">{len(orbio)} agents launched through the
-Orbio AgentVault. Tap a column to sort.</p></section>
+    also = (f", and {plural(listed, 'token')} Orbio listed among its agents without launching {'it' if listed == 1 else 'them'}"
+            if listed else "")
+    return f"""<section class="page-head"><h1>Every Orbio agent on file</h1><p class="sub">{len(orbio) - listed} agents launched through the
+Orbio AgentVault{also}. Tap a column to sort.</p></section>
 <input class="filter" type="search" placeholder="Filter by ticker, name or address" aria-label="Filter agents">
 <div class="scroll"><table class="list sortable"><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table></div>"""
 
@@ -1109,7 +1132,7 @@ document.getElementById('nf').innerHTML='{NAME} has no file on <code>'+a+'</code
 
 
 def scam_split(scams: list[dict]) -> str:
-    n = sum(1 for t in scams if t.get("orbio_agent"))
+    n = sum(1 for t in scams if is_agent(t))
     return f"{n} launched on Orbio, {len(scams) - n} elsewhere on Robinhood Chain"
 
 
@@ -1131,11 +1154,11 @@ def token_page(t: dict, feed: dict) -> str:
     s = state_of(t, now)
     addr = t["token"]
     tr, tl = t.get("treasury"), t.get("timeline") or {}
-    agent = t.get("orbio_agent")
+    agent, listed = t.get("orbio_agent"), bool(t.get("orbio_listed"))
     xp = t.get("x_profile") or {}
     site = next((i["url"] for i in t.get("identities") or [] if i["role"] == "website"), None)
     actions = []
-    if agent and s not in RED:
+    if (agent or listed) and s not in RED:
         actions.append(link(f"https://www.orbio.so/launchpad/{addr}", "Trade on Orbio" if s == "verified" else "Orbio page",
                             "btn primary" if s == "verified" else "btn"))
     actions.append(link(f"https://dexscreener.com/robinhood/{addr}", "Chart", "btn"))
@@ -1145,8 +1168,9 @@ def token_page(t: dict, feed: dict) -> str:
         actions.append(link(site, "Website", "btn"))
     actions.append(link(f"{EXPLORER}/token/{addr}", "Explorer", "btn"))
     lag = (tl.get("verified_at") or 0) - (t["launched_at"] or 0) if tl.get("verified_at") else None
-    note = {"verified": f"Verified {fmt_span(lag)} after launch" if lag is not None and lag >= 0 else "Verified",
-            "scam": "Flagged " + (fmt_span(tl["flagged_at"] - t["launched_at"]) + " after launch"
+    since = "Orbio listed it" if listed else "launch"  # a listed agent's time is when Orbio listed it
+    note = {"verified": f"Verified {fmt_span(lag)} after {since}" if lag is not None and lag >= 0 else "Verified",
+            "scam": "Flagged " + (fmt_span(tl["flagged_at"] - t["launched_at"]) + f" after {since}"
                                   if tl.get("flagged_at") and t["launched_at"] and tl["flagged_at"] >= t["launched_at"] else "by the index"),
             "linked": "Flagged for its money: no project has claimed it",
             "checking": f"Checked {plural(tl.get('checks') or 0, 'time')} so far",
@@ -1156,21 +1180,22 @@ def token_page(t: dict, feed: dict) -> str:
     badges = "".join(f'<span class="badge">{e(b.title())}</span>' for b in t.get("badges") or [] if b != "ORBIO AGENT")
     return f"""<div class="filepage" data-t="{addr}"><p class="crumb"><a href="../index.html#live">← New launches</a></p>
 <article class="file v-{s}">
-<div class="file-tab">{"File No. " + str(agent) + " · Orbio agent" if agent else "Pons launch"}</div>
+<div class="file-tab">{"File No. " + str(agent) + " · Orbio agent" if agent else
+                        "Listed on Orbio · not launched through its launchpad" if listed else "Pons launch"}</div>
 <header class="file-head"><div class="who"><h1><span class="tkr">${e(t["symbol"] or "?")}</span> <span class="nm">{e(t["name"] or "")}</span></h1>
-<p class="meta">Launched {when(t["launched_at"])}{f' by {link(EXPLORER + "/address/" + t["creator"], short(t["creator"]))}' if t.get("creator") else ""} {badges}</p>
+<p class="meta">{"Listed on Orbio" if listed else "Launched"} {when(t["launched_at"])}{f' by {link(EXPLORER + "/address/" + t["creator"], short(t["creator"]))}' if t.get("creator") else ""} {badges}</p>
 <p class="ca"><code>{addr}</code><button type="button" class="copy" data-copy="{addr}">Copy</button>
 <button type="button" class="copy star watch" data-star="{addr}" aria-pressed="false">☆ Watch</button></p></div>
 <div class="stampbox"><span class="stamp big v-{s}">{STATE[s]}</span><span class="stampnote">{e(note)}</span></div></header>
 <div class="actions">{"".join(actions)}</div>
 {stat_board(bool(agent))}
-<div data-l="chart"></div>{"" if agent else '<p class="muted small">Market numbers come from Orbio and cover Orbio agents only.</p>'}
+<div data-l="chart"></div>{"" if agent or listed else '<p class="muted small">Market numbers come from Orbio and cover Orbio agents only.</p>'}
 </article>
 {verdict_block(t, s)}
 <div class="cols">{project_block(t, s)}{score_block(t, s)}</div>
 {trader_block(t, now)}
 {apps_block(t, feed)}
-{treasury_block(t) if tr else ""}
+{treasury_block(t) if tr and not listed else ""}
 {identities(t)}
 {evidence(t) if t.get("facts") else ""}
 <p class="muted small">Raw data for this file: <a href="../api/v1/tokens/{addr}.json">{addr[:10]}….json</a></p></div>"""
@@ -1202,10 +1227,11 @@ def meme_block(t: dict, s: str) -> str:
         rows.append(("ok" if wave["rank"] == 1 else "warn",
                      f"{here} of {wave['n']} launches of ${sym} within two days"
                      + ("" if wave["rank"] == 1 else
-                        f"; the first, {tref({'token': first['token'], 'symbol': t['symbol'], 'orbio_agent': first.get('vault_id')}, '../', 'tok inline')}, launched {when(first.get('ts'))}")))
+                        f"; the first, {tref({'token': first['token'], 'symbol': t['symbol'], 'orbio_agent': first.get('vault_id'), 'orbio_listed': first.get('listed')}, '../', 'tok inline')}, launched {when(first.get('ts'))}")))
         if most and most.get("token") != t["token"]:
             rows.append(("warn", "Most holders so far: "
-                         + tref({"token": most["token"], "symbol": t["symbol"], "orbio_agent": most.get("vault_id")}, "../", "tok inline")
+                         + tref({"token": most["token"], "symbol": t["symbol"], "orbio_agent": most.get("vault_id"),
+                                 "orbio_listed": most.get("listed")}, "../", "tok inline")
                          + f" ({most['holders']:,})"))
         elif most:
             rows.append(("ok", f"The most holders of its wave so far ({most['holders']:,})"))
@@ -1233,7 +1259,8 @@ def verdict_block(t: dict, s: str) -> str:
         via = v.get("via") or {}
         if via.get("token"):
             extra = ("<div class=\"related bad\"><h3>The confirmed copy it's linked to</h3><ul><li>"
-                     + tref({"token": via["token"], "symbol": via.get("symbol"), "orbio_agent": via.get("vault_id"), "name": None}, "../")
+                     + tref({"token": via["token"], "symbol": via.get("symbol"), "orbio_agent": via.get("vault_id"),
+                             "orbio_listed": via.get("listed"), "name": None}, "../")
                      + "</li></ul><p class=\"muted\">The receipt is the transfer that ties this launch's wallet to that one. "
                      "An official post or page from the project it names would clear it.</p></div>")
     elif s == "scam" and real:
@@ -1263,7 +1290,8 @@ def verdict_block(t: dict, s: str) -> str:
 def batch_box(b: dict, t: dict, up: str = "") -> str:
     """"Verified, but…" on a verified file: the other new tokens its account, its launch wallet or accounts created
     alongside its own verified within two days, and a claiming account that's nearly empty (proof_index.batch_signals)."""
-    ref = lambda x: tref({"token": x["token"], "symbol": x.get("symbol"), "orbio_agent": x.get("vault_id"), "name": None}, up)  # noqa: E731
+    ref = lambda x: tref({"token": x["token"], "symbol": x.get("symbol"), "orbio_agent": x.get("vault_id"),  # noqa: E731
+                          "orbio_listed": x.get("listed"), "name": None}, up)
     gap = lambda x: fmt_span(abs((x.get("ts") or 0) - (t.get("launched_at") or 0)))  # noqa: E731
     at = lambda k: "@" + e(k[2:]) if k.startswith("x:") else e(k.split(":", 1)[1])  # noqa: E731
     items = [f"Its account {at(x['via'])} also verified {ref(x)}, launched {e(gap(x))} apart" for x in b.get("same_account") or []]
@@ -1359,7 +1387,7 @@ def trader_rows(t: dict, now: int) -> list[tuple[str, str, str]]:
         gap = fmt_span((t["launched_at"] or 0) - (f["ts"] or 0))
         rows.append(("Original or copy", "ok" if s == "verified" else "warn",
                      f"{ordinal(tk['rank'])} token named ${sym}. The first, "
-                     f"{tref({'token': f['token'], 'symbol': f['symbol'], 'orbio_agent': f.get('vault_id')}, '../', 'tok inline')}, "
+                     f"{tref({'token': f['token'], 'symbol': f['symbol'], 'orbio_agent': f.get('vault_id'), 'orbio_listed': f.get('listed')}, '../', 'tok inline')}, "
                      f"launched {e(gap)} earlier{where_launched(f)}. "
                      + ("The project's own channels confirm this one." if s == "verified" else "Check which one the project claims.")))
     dev = tc.get("dev") or {}
@@ -2310,7 +2338,7 @@ scores, market and treasury, related tokens, identities and the evidence behind 
 <tr><td><a href="api/v1/tokens/{sample}.json"><code>api/v1/tokens/&lt;address&gt;.json</code></a></td><td>One token, the same shape.
 Addresses are lowercase.</td></tr>
 <tr><td><a href="api/v1/summary.json"><code>api/v1/summary.json</code></a></td><td>A small list for lookups: address, ticker, name,
-Orbio agent id, verdict and status.</td></tr>
+Orbio agent id (and <code>orbio_listed</code> for a listed agent), verdict and status.</td></tr>
 <tr><td><a href="api/v1/live.json"><code>api/v1/live.json</code></a></td><td>The numbers that move, for every token, refreshed every minute:
 market cap, price, curve, 24h volume and trades, holders, change and a sparkline, the agent's treasury, and its current verdict.
 Short keys, to keep it small.</td></tr>
@@ -2326,6 +2354,10 @@ scopes it asks for, where it was seen, and <code>status</code>: <code>official</
 <li><code>market</code> and <code>treasury</code> come from Orbio's public API (Orbio agents only): price, market cap,
 stake, CREDIT and the agent's spendable balance. <code>market.curve_pct</code> is read from the chain: the ORBIO the bonding
 curve holds, as a share of the amount it graduates at.</li>
+<li><code>orbio_agent</code> is the agent's number on Orbio's launchpad. Orbio also lists existing tokens among its agents
+without launching them: such a token is an Orbio agent here too, with <code>orbio_agent</code> null and
+<code>orbio_listed: true</code>. It has no bonding curve or agent treasury, its <code>launched_at</code> is when Orbio listed it,
+and its trading comes from its pool.</li>
 <li><code>timeline.verified_at</code> is when {NAME} first saw an official channel claim the token.</li>
 <li><code>status</code> is <code>PROVEN</code>, <code>LIVE</code>, <code>BUILDING</code>, <code>UNPROVEN</code>, <code>ABANDONED</code> or
 <code>SCAM</code> (<a href="method.html#5-status">rules</a>). <code>facts[]</code> are the score lines.</li></ul>
@@ -3172,7 +3204,12 @@ JS = r"""
   function num(x){if(x==null)return '—';if(x>=1e6)return (x/1e6).toFixed(2)+'M';if(x>=1e4)return (x/1e3).toFixed(1)+'k';
     return x>=100?Math.round(x).toLocaleString('en-US'):String(+x.toFixed(2))}
   function chip(s){return '<span class="chip v-'+s+'"><i></i>'+LABEL[s]+'</span>'}
-  function meter(r){if(r.g)return '<span class="grad">Graduated</span>';if(r.c==null)return '—';
+  // an Orbio agent is launched (r.a, its number) or listed by Orbio without a launch (r.l): it has no curve, no number
+  function fno(r){return r.a?'File '+r.a:r.l?'Listed on Orbio':'Pons launch'}
+  function ag(r){return r.a?'#'+r.a:r.l?'listed':'Pons'}
+  function meter(r){if(r.g)return '<span class="grad">Graduated</span>';
+    if(r.l)return '<span class="grad" title="Listed on Orbio, not launched through its launchpad: it trades on a pool">Listed</span>';
+    if(r.c==null)return '—';
     return '<span class="meter" title="'+r.c+'% of the way to graduation"><span style="width:'+Math.max(2,Math.min(100,r.c)).toFixed(1)+'%"></span></span>'+r.c.toFixed(1)+'%'}
   function change(r){if(r.ch==null)return '—';var up=r.ch>=0;
     return '<span class="'+(up?'up':'down')+'">'+(up?'+':'')+Math.round(r.ch)+'%</span>'+(r.chh>=23?'':' <small>in '+r.chh+' h</small>')}
@@ -3200,6 +3237,7 @@ JS = r"""
       return '<span class="pill '+(up?'up':'down')+'">'+(up?'▲':'▼')+' '+Math.abs(Math.round(r.ch)).toLocaleString('en-US')+'%<small>'+
         (r.chh>=23?'24 h':'in '+r.chh+' h')+'</small></span>'},
     curve_t:function(r){if(r.g)return '<b class="tv-v">Graduated</b><span class="gauge done"><i style="width:100%"></i></span><small>Trading on its pool now</small>';
+      if(r.l)return '<b class="tv-v">No curve</b><small>Listed on Orbio, not launched through its launchpad: it trades on its pool</small>';
       if(r.c==null)return '<b class="tv-v">—</b>';var c=Math.max(0,Math.min(100,r.c));
       return '<b class="tv-v">'+r.c.toFixed(1)+'<em>%</em></b><span class="gauge"><i style="width:'+Math.max(1.5,c).toFixed(1)+'%"></i></span><small>'+
         (c===0?'Nobody has bought yet':'of the way to graduation')+'</small>'},
@@ -3209,7 +3247,7 @@ JS = r"""
     holders_t:function(r){if(r.h==null)return '<b class="tv-v">—</b>';
       return '<b class="tv-v">'+num(r.h)+'</b><small>real buyers after '+({'30m':'30 min','6h':'6 h','24h':'a day','7d':'a week'}[r.hk]||r.hk)+'</small>'},
     bal_t:function(r){return '<b class="tv-v">'+usd(r.tb)+'</b><small>USDG it can spend on AI</small>'},
-    vol_where:function(r){return r.v==null?'':r.g?'traded on its pool':'traded on its bonding curve'},
+    vol_where:function(r){return r.v==null?'':r.g||r.l?'traded on its pool':'traded on its bonding curve'},
     trt_bal:function(r){return '<b class="tv-v">'+usd(r.tb)+'</b><small>USDG for inference and tools</small>'},
     trt_staked:function(r){return '<b class="tv-v">'+num(r.tk||0)+'<em> ORBIO</em></b><small>'+
       (r.tu?(r.tl?'<span class="lock">Locked</span>unlocks '+rel(now()-r.tu):'Unlocked'):'Staked for CREDIT')+'</small>'},
@@ -3222,10 +3260,10 @@ JS = r"""
   function fileHref(k){return LIVE&&LIVE.t[k]?href(k):'https://robin.etherscan.io/token/'+k}
   function cardHtml(k,r){var s=r.s,rc=/^https?:\/\//.test(r.rc||'')?r.rc:'';
     return '<li class="card" data-t="'+k+'" data-lt="'+(r.lt||0)+'" data-state="'+grp(s)+'">'+
-      '<div class="card-top"><span class="fileno">'+(r.a?'File '+r.a:'Pons launch')+'</span><span class="age">'+rel(now()-r.lt)+'</span>'+
+      '<div class="card-top"><span class="fileno">'+fno(r)+'</span><span class="age">'+rel(now()-r.lt)+'</span>'+
       '<span class="tools"><button type="button" class="mini copy" data-copy="'+k+'">Copy CA</button>'+
       '<button type="button" class="mini star" data-star="'+k+'" aria-pressed="false" aria-label="Add to watchlist">☆</button></span></div>'+
-      '<div class="card-title"><a class="tok stretch" href="'+href(k)+'"><b>$'+esc(r.sym||'?')+'</b>'+(r.a?' <span class="no">#'+r.a+'</span>':'')+
+      '<div class="card-title"><a class="tok stretch" href="'+href(k)+'"><b>$'+esc(r.sym||'?')+'</b>'+(r.a||r.l?' <span class="no">'+ag(r)+'</span>':'')+
       ' <span class="nm">'+esc(r.n)+'</span></a><span data-l="chip"></span></div><div class="trend" data-l="trend"></div>'+
       '<dl class="card-nums"><div><dt>Market cap</dt><dd data-l="mcap"></dd></div><div><dt>Curve</dt><dd data-l="curve"></dd></div>'+
       '<div><dt>Holders</dt><dd data-l="holders"></dd></div></dl><p class="why">'+esc(r.why)+
@@ -3275,7 +3313,7 @@ JS = r"""
       if(f)f.insertAdjacentHTML('afterend','<span class="newbadge">New</span>')}})}
   function addNew(){var list=document.getElementById('feed');if(!list||!LIVE)return;var have={},t=now();
     list.querySelectorAll('.card[data-t]').forEach(function(c){have[c.dataset.t]=1});
-    Object.keys(LIVE.t).filter(function(k){var r=LIVE.t[k];return r.a&&r.lt>=t-172800&&!have[k]})
+    Object.keys(LIVE.t).filter(function(k){var r=LIVE.t[k];return (r.a||r.l)&&r.lt>=t-172800&&!have[k]})
       .sort(function(a,b){return LIVE.t[a].lt-LIVE.t[b].lt}).forEach(function(k){list.insertAdjacentHTML('afterbegin',cardHtml(k,LIVE.t[k]))});
     var empty=document.querySelector('#live .empty');if(empty)empty.hidden=list.children.length>0}
   function renderWatch(){var sec=document.getElementById('watching'),list=document.getElementById('watchlist');if(!sec||!list||!LIVE)return;
@@ -3316,10 +3354,10 @@ JS = r"""
   function mapTarget(n){var el=n&&n.closest?n.closest('.bub,.famlabel,.fam'):null;return el&&MAP.contains(el)&&!el.classList.contains('dim')&&!el.classList.contains('gone')?el:null}
   function closeBtn(){return mcPinned?'<button type="button" class="x" aria-label="Close">×</button>':''}
   function tokCard(k,kb){var r=(LIVE&&LIVE.t[k])||{},x=MX.t[k]||{},s=r.s||'checking',sym='$'+esc(r.sym||'?');
-    var h='<div class="mc-top"><span>'+(r.a?'File '+r.a:'Pons launch')+(r.lt?' · '+rel(now()-r.lt):'')+'</span>'+closeBtn()+'</div>'+
+    var h='<div class="mc-top"><span>'+fno(r)+(r.lt?' · '+rel(now()-r.lt):'')+'</span>'+closeBtn()+'</div>'+
       '<p class="mc-title"><b>'+sym+'</b><span class="nm">'+esc(r.n||'')+'</span>'+chip(s)+'</p>'+
       spark(r.sp,280,34)+'<dl class="mc-nums"><div><dt>Market cap</dt><dd>'+usd(r.m)+'</dd></div><div><dt>24h</dt><dd>'+change(r)+'</dd></div>'+
-      '<div><dt>Curve</dt><dd>'+(r.g?'<span class="grad">Graduated</span>':r.c==null?'—':r.c.toFixed(1)+'%')+'</dd></div>'+
+      '<div><dt>Curve</dt><dd>'+(r.g?'<span class="grad">Graduated</span>':r.l?'<span class="grad">Listed</span>':r.c==null?'—':r.c.toFixed(1)+'%')+'</dd></div>'+
       '<div><dt>Holders</dt><dd>'+(r.h==null?'—':r.h)+'</dd></div></dl>';
     if(x.n)h+='<ul class="checks">'+x.n.map(function(q){return '<li class="'+esc(q[0])+'">'+esc(q[1])+'</li>'}).join('')+'</ul>';
     if(r.why)h+='<p class="mc-why">'+esc(r.why)+'</p>';
@@ -3334,7 +3372,7 @@ JS = r"""
     var sum=[c.verified?c.verified+' verified':'',c.scam?c.scam+' impersonator'+(c.scam>1?'s':''):'',c.checking?c.checking+' checking':'',
       c.unverified?c.unverified+' unverified':''].filter(Boolean).join(' · ');
     var rows=f.m.slice(0,8).map(function(k){var r=(LIVE&&LIVE.t[k])||{},x=MX.t[k]||{},s=r.s||'checking';
-      var cells='<i></i><span class="o">'+(x.o?ord(x.o):'')+'</span><span class="ag">'+(r.a?'#'+r.a:'Pons')+'</span>'+
+      var cells='<i></i><span class="o">'+(x.o?ord(x.o):'')+'</span><span class="ag">'+ag(r)+'</span>'+
         '<span class="vs">'+LABEL[s]+'</span><span class="m">'+usd(r.m)+'</span>';
       return '<li class="v-'+s+'">'+(mcPinned?'<a href="'+esc(href(k))+'" data-open="'+esc(k)+'">'+cells+'</a>':'<span class="row">'+cells+'</span>')+'</li>'}).join('');
     return '<div class="mc-top"><span>Same ticker</span>'+closeBtn()+'</div><p class="mc-title"><b>$'+esc(f.s)+'</b><span class="nm">'+
@@ -3443,11 +3481,11 @@ JS = r"""
       if(ok){var d=(x-W/2)*(x-W/2)+(y-H/2)*(y-H/2);if(d<bd){bd=d;best={x:x,y:y}}}}
     return best}
   function spawnNew(){if(!LIVE||!MAP||MAP.dataset.mode!=='new'||!BODY.length)return;var t=now(),n=0;  // New only, when on show
-    Object.keys(LIVE.t).forEach(function(k){var r=LIVE.t[k];if(n>=6||ONMAP[k]||!r.a||!r.lt||t-r.lt>6*3600)return;
+    Object.keys(LIVE.t).forEach(function(k){var r=LIVE.t[k];if(n>=6||ONMAP[k]||!(r.a||r.l)||!r.lt||t-r.lt>6*3600)return;
       var rr=Math.max(8,Math.min(44,7+4.2*Math.sqrt(Math.max(0,(r.m||0)-(MX.b||0))/1000))),p=freeSpot(rr);ONMAP[k]=1;if(!p)return;n++;
       var s=r.s||'checking',g=document.createElementNS(NS,'g');g.setAttribute('class','body');
       g.innerHTML='<a class="bub born v-'+s+'" href="'+esc(href(k))+'" data-t="'+esc(k)+'" data-state="'+grp(s)+
-        '" aria-label="$'+esc(r.sym||'?')+' #'+esc(r.a)+' · '+LABEL[s]+'">'+orbSVG(0,0,rr)+(rr>=17?'<text class="d" x="0" y="0" style="font-size:'+
+        '" aria-label="$'+esc(r.sym||'?')+' '+esc(ag(r))+' · '+LABEL[s]+'">'+orbSVG(0,0,rr)+(rr>=17?'<text class="d" x="0" y="0" style="font-size:'+
         Math.min(13,rr*.42).toFixed(1)+'px">'+esc((r.sym||'?').slice(0,7))+'</text>':'')+'</a>';
       MAP.querySelector('.bodies').appendChild(g);drawBody(addBody(g,p.x,p.y,rr));bubble(g.firstChild,r)});
     if(n){applyFilter();kick()}}
@@ -3497,7 +3535,7 @@ JS = r"""
       '<defs><clipPath id="scan-clip"><circle r="56"/></clipPath></defs><g class="bub cur v-'+s+'">'+orbSVG(0,0,56)+'</g>'+
       '<g class="hud v-'+s+'"><circle class="h1" r="70"/><circle class="h2" r="76"/>'+
       '<g clip-path="url(#scan-clip)"><rect class="bar" x="-56" y="-74" width="112" height="18"/></g></g></svg>'+
-      '<div class="scan-read"><p class="scan-k">'+(r.a?'File '+esc(r.a):'Pons launch')+' · reading the file</p><p class="scan-t"><b>$'+
+      '<div class="scan-read"><p class="scan-k">'+esc(fno(r))+' · reading the file</p><p class="scan-t"><b>$'+
       esc(r.sym||'?')+'</b><span>'+esc(r.n||'')+'</span></p><ul>'+rows.map(function(q,i){return '<li class="'+esc(q[2]||'')+
       '" style="animation-delay:'+(T0+i*STEP)+'ms">'+(q[0]?'<span>'+esc(q[0])+'</span>':'')+'<b>'+esc(q[1])+'</b></li>'}).join('')+
       '</ul><p class="scan-go" style="animation-delay:'+(T0+rows.length*STEP+60)+'ms">Opening the file →</p></div></div>';
@@ -3564,7 +3602,7 @@ JS = r"""
       document.body.appendChild(t);t.select();try{document.execCommand('copy')}catch(e){}document.body.removeChild(t);done()}
     if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done,fallback);else fallback()}
   function sortVal(row,key){var r=(LIVE&&LIVE.t[row.dataset.t])||{};switch(key){
-    case 'mcap':return r.m||0;case 'vol':return r.v||0;case 'curve':return r.g?101:(r.c||0);case 'age':return +row.dataset.lt||0;
+    case 'mcap':return r.m||0;case 'vol':return r.v||0;case 'curve':return r.g||r.l?101:(r.c||0);case 'age':return +row.dataset.lt||0;
     case 'verdict':return ORDER[r.s||row.dataset.state]||0;case 'rank':return +row.dataset.rank||0;
     case 'score':return +row.dataset.score||0;default:return key in row.dataset?+row.dataset[key]||0:row.dataset.sym||''}}
   function sortBy(th){var tb=th.closest('table').tBodies[0],key=th.dataset.sort,cur=th.getAttribute('aria-sort');
@@ -3613,7 +3651,7 @@ JS = r"""
     q.addEventListener('input',function(){var v=q.value.trim().toLowerCase().replace(/^\$/,'');
       if(!v){res.hidden=true;res.innerHTML='';return}
       var hits=all.filter(function(t){return t.t.indexOf(v)===0||(t.s||'').toLowerCase().indexOf(v)===0||(t.n||'').toLowerCase().indexOf(v)>=0}).slice(0,8);
-      res.innerHTML=hits.length?hits.map(function(t){return '<a href="'+href(t.t)+'"><b>$'+esc(t.s)+'</b>'+(t.a?'<span class="muted">#'+t.a+'</span>':'')+
+      res.innerHTML=hits.length?hits.map(function(t){return '<a href="'+href(t.t)+'"><b>$'+esc(t.s)+'</b>'+(t.a||t.l?'<span class="muted">'+ag(t)+'</span>':'')+
         '<span class="muted">'+esc(t.n)+'</span>'+chip(t.k)+'</a>'}).join('')
         :'<div class="none">'+(/^0x[0-9a-f]{40}$/.test(v)?'Not on file yet. Dossier covers Orbio agents and the tokens projects claim.':'No match.')+'</div>';
       res.hidden=false});
@@ -3688,7 +3726,7 @@ def ticker_and_name(t: dict) -> str:
 
 def search_title(t: dict, s: str) -> str:
     who, ca = ticker_and_name(t), short(t["token"])
-    on = " on Orbio" if t.get("orbio_agent") else ""
+    on = " on Orbio" if is_agent(t) else ""
     return {"verified": f"{who}: the official token, verified",
             "scam": f"{who} {ca}: an impersonator, not the real token",
             "linked": f"{who} {ca}: launched from an impersonator's wallet",
@@ -3715,7 +3753,9 @@ def search_desc(t: dict, s: str) -> str:
         real = [r for r in (t.get("related") or {}).get("claimed") or [] if r["token"] != t["token"]]
         if s == "scam" and real:
             head += f" The real one is ${real[0].get('symbol') or '?'}, {short(real[0]['token'])}."
-    where = (f" Orbio agent #{t['orbio_agent']} on Robinhood Chain" if t.get("orbio_agent") else " On Robinhood Chain") \
+    where = (f" Orbio agent #{t['orbio_agent']} on Robinhood Chain" if t.get("orbio_agent") else
+             " Listed on Orbio (not launched through its launchpad), on Robinhood Chain" if t.get("orbio_listed") else
+             " On Robinhood Chain") \
         + f", contract {t['token']}."
     head = head if len(head) <= 320 - len(where) else head[:320 - len(where) - 1].rsplit(" ", 1)[0] + "…"
     return head + where
@@ -3843,6 +3883,7 @@ def build(feed: dict, out: Path = OUT, tick=None) -> int:
     (tmp / "api" / "v1" / "summary.json").write_text(json.dumps(
         {"method": feed["method"], "generated_at": feed["generated_at"],
          "tokens": [{"token": t["token"], "symbol": t["symbol"], "name": t["name"], "orbio_agent": t.get("orbio_agent"),
+                     **({"orbio_listed": True} if t.get("orbio_listed") else {}),
                      "verdict": t["verdict"]["verdict"], "status": t["status"]} for t in feed["tokens"]]},
         ensure_ascii=False), "utf-8")
     old = out.with_name(out.name + ".old")
