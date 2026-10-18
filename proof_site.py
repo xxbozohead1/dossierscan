@@ -231,6 +231,7 @@ def fileno(t: dict) -> str:
 
 
 ON_FILE: set[str] = set()  # tokens with a page in this build; set by build() and build_single()
+OPS: dict[str, dict] = {}  # this build's operators with a page, by id (proof_index.operators); set by set_build()
 
 
 def tref(t: dict, up: str = "", cls: str = "tok") -> str:
@@ -279,7 +280,8 @@ FAVICON = "data:image/svg+xml," + urllib.parse.quote(
     "stroke-linecap='round' stroke-linejoin='round'/></g></svg>", safe=":/=' ")
 LOGO = ROOT / "static" / "logo.png"  # the full seal, 512x512: the $DOSSIER page and the home-screen icon
 NAV = (("index.html#live", "New launches"), ("index.html#board", "Board"), ("scams.html", "Impersonators"),
-       ("apps.html", "Apps"), ("work.html", "At work"), ("token.html", "$DOSSIER"), ("method.html", "Method"), ("api.html", "API"))
+       ("operators.html", "Operators"), ("apps.html", "Apps"), ("work.html", "At work"), ("token.html", "$DOSSIER"),
+       ("method.html", "Method"), ("api.html", "API"))
 
 
 # dark is the default; the switch keeps a viewer's choice of light in this browser. THEME_BOOT sits in <head> and applies
@@ -455,7 +457,7 @@ def signature(feed: dict) -> str:
     now = feed["generated_at"]
     static = [{**{k: v for k, v in t.items() if k not in LIVE_KEYS}, "_state": state_of(t, now)} for t in feed["tokens"]]
     blob = json.dumps({"speed": feed.get("speed"), "method": feed.get("method"), "bot": bot_username(), "site": site_url(),
-                       "cases": load_cases(),
+                       "cases": load_cases(), "operators": feed.get("operators"),
                        "assets": [asset_version(), file_version(OG_IMAGE), file_version(LOGO)], "tokens": static}, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
@@ -1147,6 +1149,130 @@ chain of wallets, behind a confirmed copy.</p></section>
 {scam_list(scams, now, searchable=True)}"""
 
 
+# ----------------------------------------------------------------- operators
+#
+# Who is behind a token, and what else they did (user, 19 Oct): one page per group of wallets the money links join
+# (proof_index.operators), for those with two Orbio agents or more, or a copier ring with a second token. The grouping
+# is an inference, so every page says how it was made.
+
+OP_PER = 25  # rows a page
+OP_METHOD = ("Wallets are grouped when one gave another its first ETH, through throwaway wallets only. That suggests one "
+             "operator but doesn't prove it. An exchange, a busy wallet or a contract never joins two groups.")
+
+
+def op_counts(o: dict) -> str:
+    c = o["counts"]
+    return f'{plural(c["tokens"], "token")} · {plural(c["impersonators"], "impersonator")}'
+
+
+def op_key(o: dict, site: str) -> str:
+    """What an operator's page is rendered from, as page_key is for a token's."""
+    linked = ",".join(x["token"] for x in o["tokens"] if x["token"] in ON_FILE)
+    return hashlib.sha256((site + json.dumps(o, sort_keys=True, default=str) + linked).encode()).hexdigest()
+
+
+def addr_link(a: str) -> str:
+    return link(f"{EXPLORER}/address/{a}", short(a))
+
+
+def operator_page(o: dict) -> str:
+    c, m, b, up = o["counts"], o["money"], o["batch"], "../"
+    launching = sum(1 for x in o["wallets"] if x["launched"])
+    span = when(o["first_launch"]) if o["first_launch"] == o["last_launch"] else \
+        f'between {when(o["first_launch"])} and {when(o["last_launch"])}'
+    ring = (f'<div class="related bad"><h3>A copier ring</h3><p>{plural(c["confirmed_copies"], "token")} from these wallets '
+            f'{"is a confirmed copy" if c["confirmed_copies"] == 1 else "are confirmed copies"} of other projects: those projects’ '
+            "own channels list a different contract or disown them. Its other tokens are marked as launched from an "
+            "impersonator’s wallet, unless their own project claims them.</p></div>") if o["copier_ring"] else ""
+    tally = [("Orbio agents", c["agents"], ""), ("verified", c["verified"], "ok"), ("impersonators", c["impersonators"], "bad"),
+             ("unverified", c["unverified"], ""), ("memes", c["memes"], ""), ("wallets", len(o["wallets"]), "")]
+    tally_html = "".join(f'<div><dt>{k}</dt><dd class="{cls}">{v}</dd></div>' for k, v, cls in tally if v or k != "memes")
+    per = f' data-per="{OP_PER}" data-label="Pages of tokens"' if len(o["tokens"]) > OP_PER else ""
+    toks = "".join(
+        f"""<tr class="{"pg-off" if i > OP_PER else ""}" data-t="{x["token"]}" data-lt="{x["launched_at"] or 0}" data-sym="{e((x["symbol"] or "").lower())}"
+data-state="{x["state"]}"><td>{tref({"token": x["token"], "symbol": x["symbol"], "name": x["name"]}, up)}</td>
+<td class="muted">{e(agent_no(x)) or "Pons"}</td><td class="hide-sm muted">{when(x["launched_at"])}</td>
+<td><span data-l="chip">{chip(x["state"])}</span></td>
+<td class="hide-sm">{status_chip(x["status"])}{f' <span class="muted">{x["score"]}/100</span>' if x["score"] is not None else ""}</td>
+<td class="numcol">{ph("mcap") if x["on_site"] else "—"}</td></tr>""" for i, x in enumerate(o["tokens"], 1))
+    head = (sort_th("name", "Token") + "<th>#</th>" + sort_th("age", "Launched", "hide-sm")
+            + sort_th("verdict", "Official") + '<th class="hide-sm">Status</th>' + sort_th("mcap", "Mkt cap", "numcol"))
+    money = []
+    if m["stake_withdrawn"] > 0:
+        money.append(("bad", f'Owners took {num(m["stake_withdrawn"])} ORBIO out of the stakes of '
+                             f'{plural(m["agents_withdrew"], "agent")}'))
+    elif any(x["orbio_agent"] for x in o["tokens"]):
+        money.append(("ok", "No owner has taken ORBIO out of an agent’s stake"))
+    if m["credit_minted"]:
+        mt = m["credit_minted"]
+        money.append(("ok" if m["credit_activated"] >= .1 * mt else "warn",
+                      f'Its agents’ fees minted {num(mt)} CREDIT: {num(m["credit_activated"])} ({m["credit_activated"] / mt:.0%}) '
+                      f'put to work, {num(m["credit_moved_out"])} ({m["credit_moved_out"] / mt:.0%}) moved out of the agent '
+                      f'wallets. <a href="{up}work.html">Every agent’s CREDIT</a>'))
+    if b["batch"] or b["thin"]:
+        money.append(("warn", ", ".join(([f'{plural(b["batch"], "verified token")} flagged as one of a batch'] if b["batch"] else [])
+                                        + ([f'{plural(b["thin"], "token")} verified only by a near-empty account'] if b["thin"] else []))))
+    chans = []
+    for ch in o["channels"][:40]:
+        name = link(ch["url"], "@" + ch["key"][2:] if ch["key"].startswith("x:") else ch["key"].split(":", 1)[1])
+        if ch["claims"]:
+            chans.append(("ok", f'{name} claims {ch["claims"]} of its tokens'
+                                + (f', and is named by {ch["named"]} more it doesn’t claim' if ch["named"] else "")))
+        else:
+            chans.append(("bad" if o["copier_ring"] else "warn",
+                          f'{name} is named by {ch["named"]} of its tokens and claims none of them'))
+    more = len(o["channels"]) - 40
+    checks = lambda rows: '<ul class="checks">' + "".join(f'<li class="{k}"><span>{h}</span></li>' for k, h in rows) + "</ul>"  # noqa: E731
+    wper = f' data-per="{OP_PER}" data-label="Pages of wallets"' if len(o["wallets"]) > OP_PER else ""
+    wal = "".join(
+        f"""<tr class="{"pg-off" if i > OP_PER else ""}"><td>{addr_link(x["addr"])}{' <span class="muted small">earliest on file</span>' if x["addr"] == o["id"] and len(o["wallets"]) > 1 else ""}</td>
+<td>{addr_link(x["funder"]) if x["funder"] else f'<span class="muted">{"no funding on file" if x["traced"] else "not traced yet"}</span>'}</td>
+<td class="numcol">{f'{x["fund_eth"]:.4g}' if x["funder"] and x["fund_eth"] is not None else "—"}</td>
+<td class="hide-sm">{link(f"{EXPLORER}/tx/{x['fund_tx']}", "Funding tx") if x["funder"] and x["fund_tx"] else ""}</td>
+<td class="numcol">{x["launched"]}</td></tr>""" for i, x in enumerate(o["wallets"], 1))
+    return f"""<div class="filepage"><p class="crumb"><a href="{up}operators.html">← Operators</a></p>
+<section class="page-head"><p class="eyebrow">Operator · {plural(len(o["wallets"]), "wallet")}</p><h1>{e(o["label"])}</h1>
+<p class="sub">{plural(c["tokens"], "token")} on file, {c["agents"]} of them Orbio agents, launched from
+{plural(launching, "wallet")} {span}.</p><p class="sub">{OP_METHOD}</p>
+<dl class="tally">{tally_html}</dl>{ring}</section>
+<section class="opsec"><h2>Tokens</h2><p class="sub">Orbio agents first, newest first. Tap a column to sort.</p>
+<div class="scroll"><table class="list sortable"{per}><thead><tr>{head}</tr></thead><tbody>{toks}</tbody></table></div></section>
+{f'<section class="opsec"><h2>Money and flags</h2>{checks(money)}</section>' if money else ""}
+{f'<section class="opsec"><h2>Accounts and sites</h2><p class="sub">The X accounts and sites its tokens name, and whether each one claims them. A token’s metadata is written by whoever launched it, so only a claim counts.</p>{checks(chans)}{f"<p class=muted>…and {more} more.</p>" if more > 0 else ""}</section>' if chans else ""}
+<section class="opsec"><h2>Wallets</h2><p class="sub">Each wallet’s first ETH: who sent it, how much, and the transfer.</p>
+<div class="scroll"><table class="list"{wper}><thead><tr><th>Wallet</th><th>First ETH from</th><th class="numcol">ETH</th>
+<th class="hide-sm">Receipt</th><th class="numcol">Tokens</th></tr></thead><tbody>{wal}</tbody></table></div></section>
+<p class="muted small">Raw data for this operator: <a href="{up}api/v1/operators/{o["id"]}.json">{o["id"][:10]}….json</a></p></div>"""
+
+
+def operators_page(feed: dict) -> str:
+    ops = feed.get("operators") or []
+    rings = sum(1 for o in ops if o["copier_ring"])
+
+    def row(i: int, o: dict) -> str:
+        c = o["counts"]
+        find = " ".join([o["label"], o["id"], *o["accounts"], *(x["addr"] for x in o["wallets"])]).lower()
+        pill = f' <span class="rbadge">{icon("stop")}Copier ring</span>' if o["copier_ring"] else ""
+        return (f'<tr class="{"pg-off" if i > OP_PER else ""}" data-search="{e(find)}" data-kind="{"ring" if o["copier_ring"] else ""}" '
+                f'data-sym="{e(o["label"].lower())}" data-agents="{c["agents"]}" data-verified="{c["verified"]}" '
+                f'data-imps="{c["impersonators"]}" data-wallets="{len(o["wallets"])}" data-lt="{o["last_launch"] or 0}">'
+                f'<td><a href="o/{o["id"]}.html"><b>{e(o["label"])}</b></a>{pill}</td><td class="numcol">{c["agents"]}</td>'
+                f'<td class="numcol">{c["verified"]}</td><td class="numcol">{c["impersonators"]}</td>'
+                f'<td class="numcol hide-sm">{len(o["wallets"])}</td><td class="hide-sm muted">{when(o["last_launch"])}</td></tr>')
+    head = (sort_th("name", "Operator") + sort_th("agents", "Agents", "numcol", "descending") + sort_th("verified", "Verified", "numcol")
+            + sort_th("imps", "Impersonators", "numcol") + sort_th("wallets", "Wallets", "numcol hide-sm")
+            + sort_th("age", "Latest launch", "hide-sm"))
+    return f"""<section class="page-head"><h1>Operators behind Orbio launches</h1><p class="sub">Who is behind a token, and what else they
+launched. Each operator is a group of wallets the money joins; it gets a page once it has launched two Orbio agents, or when
+it is a copier ring. {OP_METHOD}</p>
+<dl class="tally"><div><dt>operators</dt><dd>{len(ops)}</dd></div><div><dt>copier rings</dt><dd class="bad">{rings}</dd></div>
+<div><dt>agents they launched</dt><dd>{sum(o["counts"]["agents"] for o in ops)}</dd></div></dl></section>
+<div class="filters"><button type="button" data-pick="ring" aria-pressed="false">Copier rings only <span>{rings}</span></button></div>
+<input class="filter" type="search" placeholder="Filter by name, @account or wallet" aria-label="Filter operators">
+<div class="scroll"><table class="list sortable" data-per="{OP_PER}" data-label="Pages of operators"><thead><tr>{head}</tr></thead>
+<tbody>{"".join(row(i, o) for i, o in enumerate(ops, 1)) or '<tr><td colspan="6" class="muted">None yet.</td></tr>'}</tbody></table></div>"""
+
+
 # ----------------------------------------------------------------- token file
 
 def token_page(t: dict, feed: dict) -> str:
@@ -1390,6 +1516,10 @@ def trader_rows(t: dict, now: int) -> list[tuple[str, str, str]]:
                      f"{tref({'token': f['token'], 'symbol': f['symbol'], 'orbio_agent': f.get('vault_id'), 'orbio_listed': f.get('listed')}, '../', 'tok inline')}, "
                      f"launched {e(gap)} earlier{where_launched(f)}. "
                      + ("The project's own channels confirm this one." if s == "verified" else "Check which one the project claims.")))
+    if op := OPS.get(t.get("operator") or ""):
+        lead = "" if op["label"].startswith("Operator ") else "Operator: "  # not "Operator: Operator 0x…"
+        rows.append(("Creator", "bad" if op["copier_ring"] else "warn" if op["counts"]["impersonators"] else "ok",
+                     f'{lead}<a href="../o/{op["id"]}.html">{e(op["label"])}</a> · {op_counts(op)}'))
     dev = tc.get("dev") or {}
     if dev:
         n = dev["launches_week"]
@@ -2345,7 +2475,11 @@ Short keys, to keep it small.</td></tr>
 <tr><td><a href="api/v1/apps.json"><code>api/v1/apps.json</code></a></td><td>Every Sign in with Orbio app found on the sites Orbio
 agents point to: what Orbio's consent page says about it (name, the host it sends people back to, fee and its changes), the
 scopes it asks for, where it was seen, and <code>status</code>: <code>official</code>, <code>unverified</code> or
-<code>impersonator</code>.</td></tr></tbody></table></div>
+<code>impersonator</code>.</td></tr>
+<tr><td><a href="api/v1/operators.json"><code>api/v1/operators.json</code></a></td><td>The operators with a page: id, label,
+whether it is a copier ring, its counts by verdict, its wallets and its first and last launch.</td></tr>
+<tr><td><code>api/v1/operators/&lt;id&gt;.json</code></td><td>One operator, as its page shows it: its wallets with their
+first funding, its tokens with their state, the accounts and sites they name, and the stake and CREDIT its agents moved.</td></tr></tbody></table></div>
 <h2>Fields worth knowing</h2><ul>
 <li><code>verdict.verdict</code> is <code>verified</code>, <code>scam</code> or <code>unverified</code>, and
 <code>verdict.receipts</code> links the post or page it rests on.</li>
@@ -2358,6 +2492,10 @@ curve holds, as a share of the amount it graduates at.</li>
 without launching them: such a token is an Orbio agent here too, with <code>orbio_agent</code> null and
 <code>orbio_listed: true</code>. It has no bonding curve or agent treasury, its <code>launched_at</code> is when Orbio listed it,
 and its trading comes from its pool.</li>
+<li><code>operator</code> is the id of the group of wallets behind the token, when that group has a page
+(<code>o/&lt;id&gt;.html</code>): two Orbio agents or more, or a copier ring. Wallets are grouped when one gave another its first
+ETH through throwaway wallets only, so an exchange or a busy wallet never joins two. It suggests one operator; it doesn't prove
+one. The id is the group's earliest wallet on file, and changes if a later trace reaches further back.</li>
 <li><code>timeline.verified_at</code> is when {NAME} first saw an official channel claim the token.</li>
 <li><code>status</code> is <code>PROVEN</code>, <code>LIVE</code>, <code>BUILDING</code>, <code>UNPROVEN</code>, <code>ABANDONED</code> or
 <code>SCAM</code> (<a href="method.html#5-status">rules</a>). <code>facts[]</code> are the score lines.</li></ul>
@@ -2870,7 +3008,8 @@ table.list{width:100%;border-collapse:collapse;font-size:14px}
 .related{margin-top:16px;padding-top:14px;border-top:1px dashed var(--rule)}.related h3{margin-top:0}
 .related ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}.related.bad h3{color:var(--bad)}.related.warn h3{color:var(--warn)}
 .cols{display:grid;grid-template-columns:1.25fr 1fr;gap:16px}
-.project,.score,.safety,.treasury{background:var(--sheet);border:1px solid var(--rule);border-radius:14px;padding:20px 22px}
+.project,.score,.safety,.treasury,.opsec{background:var(--sheet);border:1px solid var(--rule);border-radius:14px;padding:20px 22px}
+.opsec .sub{margin-bottom:12px}.page-head .related{margin-top:22px}.filters+.filter{margin-top:12px}
 /* Sign in with Orbio: each app an access pass, its fee on a tear-off stub */
 section.apps{margin:22px 0}section.apps>p{margin:6px 0 0}
 .passes{display:grid;gap:18px;margin:18px 0}
@@ -3161,7 +3300,7 @@ th[data-sort] button{padding:8px 0}
 }
 .rd{display:none;margin-top:3px;font-size:12.5px}
 @media (max-width:560px){.keynums{grid-template-columns:repeat(2,minmax(0,1fr))}.hide-sm{display:none}.rd{display:block}.stampbox{flex-direction:row;padding:0}
-.stamp.big{font-size:20px;padding:11px 16px 9px}.verdict .why{font-size:17px}.file{padding:18px 16px}.verdict,.project,.score,.safety,.treasury,.evidence{padding:16px}
+.stamp.big{font-size:20px;padding:11px 16px 9px}.verdict .why{font-size:17px}.file{padding:18px 16px}.verdict,.project,.score,.safety,.treasury,.evidence,.opsec{padding:16px}
 .tally{gap:10px 24px}.tally dd{font-size:22px}
 .wbars{display:block}.wrow{width:calc(100% + 24px);grid-template-columns:auto minmax(0,1fr) 4.2ch;grid-template-areas:"l l l" "t t p" "a n n";gap:8px 14px}
 .wl{grid-area:l}.wtrack{grid-area:t}.wpct{grid-area:p;font-size:20px}.wamt{grid-area:a;text-align:left}.wn{grid-area:n;text-align:right}
@@ -3689,8 +3828,10 @@ def page_key(t: dict, feed: dict, site: str) -> str:
     aren't part of it; what it does print of them is (the holder counts, the fees collected), with its state at this
     build's time and whether each token it mentions has a page to link to."""
     tr = t.get("treasury") or {}
+    op = OPS.get(t.get("operator") or "")
     blob = json.dumps({**{k: v for k, v in t.items() if k not in ("market", "activity", "treasury")},
-                       "_state": state_of(t, feed["generated_at"]), "_treasury": [bool(t.get("treasury")), tr.get("fees_orbio")]},
+                       "_state": state_of(t, feed["generated_at"]), "_treasury": [bool(t.get("treasury")), tr.get("fees_orbio")],
+                       "_op": op and [op["label"], op["copier_ring"], op["counts"]["tokens"], op["counts"]["impersonators"]]},
                       sort_keys=True, default=str)
     linked = sorted(a for a in set(PAGE_ADDR.findall(blob)) if a in ON_FILE)
     return hashlib.sha256((site + blob + ",".join(linked)).encode()).hexdigest()
@@ -3700,6 +3841,8 @@ def set_build(feed: dict) -> None:
     """What the page functions read from the build they're part of: the tokens with a page, the fee terms, the cases."""
     ON_FILE.clear()
     ON_FILE.update(t["token"] for t in feed["tokens"])
+    OPS.clear()
+    OPS.update((o["id"], o) for o in feed.get("operators") or [])
     TERMS.clear()
     TERMS.update((feed.get("network") or {}).get("fee_terms") or {})
     CASES[:] = load_cases()  # before any page: the header links them
@@ -3770,6 +3913,7 @@ def list_pages(feed: dict, home_too: bool = True) -> list[tuple[str, str, str]]:
     return ([("index.html", f"{NAME}: which Orbio launch is the real one?", home(feed))] if home_too else []) + [
         ("agents.html", f"Every Orbio agent · {NAME}", agents_page(feed)),
         ("scams.html", f"Impersonators caught · {NAME}", scams_page(feed)),
+        ("operators.html", f"Operators behind Orbio launches · {NAME}", operators_page(feed)),
         ("apps.html", f"Sign in with Orbio apps · {NAME}", apps_page(feed)),
         ("work.html", f"What Orbio agents do with their compute budget · {NAME}", work_page(feed))]
 
@@ -3827,7 +3971,9 @@ def build(feed: dict, out: Path = OUT, tick=None) -> int:
         shutil.rmtree(tmp)
     (tmp / "assets").mkdir(parents=True)
     (tmp / "t").mkdir()
+    (tmp / "o").mkdir()
     (tmp / "api" / "v1" / "tokens").mkdir(parents=True)
+    (tmp / "api" / "v1" / "operators").mkdir()
     (tmp / "assets" / "style.css").write_text(CSS.strip() + "\n", "utf-8")
     (tmp / "assets" / "app.js").write_text(JS.strip() + "\n", "utf-8")
 
@@ -3835,6 +3981,7 @@ def build(feed: dict, out: Path = OUT, tick=None) -> int:
         (tmp / rel).write_text(page(title, body, feed, depth, desc, path=rel), "utf-8")
 
     set_build(feed)
+    ops = feed.get("operators") or []
     for rel, title, body in list_pages(feed):
         put(rel, title, body)
     if CASES:
@@ -3856,12 +4003,13 @@ def build(feed: dict, out: Path = OUT, tick=None) -> int:
     (tmp / "robots.txt").write_text("User-agent: *\nAllow: /\n" + (f"Sitemap: {site}/sitemap.xml\n" if site else ""), "utf-8")
     if site:
         live_cases = [c for c in CASES if c.get("status") == "published"]  # never a draft, even on the dev server
-        pages = ["", "agents.html", "scams.html", "apps.html", "work.html", "token.html", "method.html", "api.html"] + [f't/{t["token"]}.html' for t in feed["tokens"]] \
+        pages = ["", "agents.html", "scams.html", "operators.html", "apps.html", "work.html", "token.html", "method.html", "api.html"] \
+            + [f't/{t["token"]}.html' for t in feed["tokens"]] + [f'o/{o["id"]}.html' for o in ops] \
             + (["cases.html"] + [f'case/{c["slug"]}.html' for c in live_cases] if live_cases else [])
         # a file's last change, so a search engine reads a verdict again when it changes: launch, verified or flagged
         changed = {f't/{t["token"]}.html': max(x or 0 for x in (t.get("launched_at"), (t.get("timeline") or {}).get("verified_at"),
                                                                  (t.get("timeline") or {}).get("flagged_at")))
-                   for t in feed["tokens"]}
+                   for t in feed["tokens"]} | {f'o/{o["id"]}.html': o["last_launch"] for o in ops}
         stamp = lambda p: (f"<lastmod>{time.strftime('%Y-%m-%d', time.gmtime(changed[p]))}</lastmod>"  # noqa: E731
                            if changed.get(p) else "")
         (tmp / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
@@ -3876,7 +4024,22 @@ def build(feed: dict, out: Path = OUT, tick=None) -> int:
         if not (_page_keys.get(str(was)) == key and carry(was, tmp / rel)):
             (tmp / rel).write_text(token_html(t, feed), "utf-8")
         (tmp / "api" / "v1" / "tokens" / f'{t["token"]}.json').write_text(token_json(t, feed), "utf-8")
-    (tmp / "api" / "v1" / "feed.json").write_text(json.dumps(feed, ensure_ascii=False), "utf-8")
+    for o in ops:
+        rel = f'o/{o["id"]}.html'
+        was, key = out / rel, op_key(o, site_k)
+        keys[str(was)] = key
+        if not (_page_keys.get(str(was)) == key and carry(was, tmp / rel)):
+            (tmp / rel).write_text(page(f'{o["label"]} · Operators · {NAME}', operator_page(o), feed, 1,
+                                        f'{o["label"]}: {op_counts(o)} on Robinhood Chain. ' + OP_METHOD, path=rel), "utf-8")
+        (tmp / "api" / "v1" / "operators" / f'{o["id"]}.json').write_text(json.dumps(
+            {"method": feed["method"], "generated_at": feed["generated_at"], **o}, ensure_ascii=False), "utf-8")
+    (tmp / "api" / "v1" / "operators.json").write_text(json.dumps(
+        {"method": feed["method"], "generated_at": feed["generated_at"],
+         "operators": [{k: o[k] for k in ("id", "label", "accounts", "copier_ring", "counts", "first_launch", "last_launch")}
+                       | {"wallets": len(o["wallets"])} for o in ops]}, ensure_ascii=False), "utf-8")
+    # the operators have endpoints of their own (above): feed.json keeps its shape, with "operator" on each token that has one
+    (tmp / "api" / "v1" / "feed.json").write_text(json.dumps({k: v for k, v in feed.items() if k != "operators"},
+                                                             ensure_ascii=False), "utf-8")
     (tmp / "api" / "v1" / "apps.json").write_text(json.dumps(
         {"method": feed["method"], "generated_at": feed["generated_at"], "apps": feed.get("apps") or []}, ensure_ascii=False), "utf-8")
     write_live(feed, tmp)
@@ -3942,6 +4105,7 @@ def build_single(feed: dict, name: str = NAME) -> str:
         now = feed["generated_at"]
         ON_FILE.clear()
         ON_FILE.update(t["token"] for t in feed["tokens"])
+        OPS.clear()  # operator pages aren't views of the one-page build: no links to them
         TERMS.clear()
         TERMS.update((feed.get("network") or {}).get("fee_terms") or {})
         views = [("home", f"{name}: which Orbio launch is the real one?", home(feed)),
