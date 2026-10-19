@@ -2492,6 +2492,9 @@ curve holds, as a share of the amount it graduates at.</li>
 without launching them: such a token is an Orbio agent here too, with <code>orbio_agent</code> null and
 <code>orbio_listed: true</code>. It has no bonding curve or agent treasury, its <code>launched_at</code> is when Orbio listed it,
 and its trading comes from its pool.</li>
+<li><code>apps[]</code> lists the Sign in with Orbio apps on the token's sites: <code>name</code>, <code>status</code> and
+<code>fee_bps</code>, the fee the app adds to what its users spend, in basis points (500 = 5%). <code>owner.creator_tax_bps</code> is
+the token's extra creator fee on every buy and sell, on top of Pons's 1%.</li>
 <li><code>operator</code> is the id of the group of wallets behind the token, when that group has a page
 (<code>o/&lt;id&gt;.html</code>): two Orbio agents or more, or a copier ring. Wallets are grouped when one gave another its first
 ETH through throwaway wallets only, so an exchange or a busy wallet never joins two. It suggests one operator; it doesn't prove
