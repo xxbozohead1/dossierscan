@@ -2459,9 +2459,10 @@ has no limit.</p>
 <code>api/v1/tokens/&lt;address&gt;.json</code> of any other token launched on Pons, the launchpad behind Orbio and most launches on
 Robinhood Chain. The first request answers 202 with
 <code>"status": "checking"</code> while {NAME} reads the project's X account and site; ask the same URL again and the file is there,
-usually within a minute, in the same shape with <code>"on_demand": true</code>. A key can ask for 25 checks a day, and an address
-that isn't a launch doesn't count. An unverified token's file gives <code>recheck_after</code>, 6 hours after its channels were
-last read: a request after that checks it again.</p>
+usually within a minute, in the same shape with <code>"on_demand": true</code> and the flag <code>WIDE</code>. A key can ask for 25
+checks a day, and an address that isn't a launch doesn't count. An unverified token's file gives <code>recheck_after</code>, 6 hours
+after its channels were last read: a request after that checks it again. Orbio agents never need this: each one has a file from its
+first seconds, so ask for it as you would any other.</p>
 <h2>Endpoints</h2><div class="scroll"><table class="list md"><thead><tr><th>Path</th><th>What</th></tr></thead><tbody>
 <tr><td><a href="api/v1/feed.json"><code>api/v1/feed.json</code></a></td><td>Every token on file: verdict with receipts, status,
 scores, market and treasury, related tokens, identities and the evidence behind each score line.</td></tr>
@@ -2499,6 +2500,11 @@ the token's extra creator fee on every buy and sell, on top of Pons's 1%.</li>
 (<code>o/&lt;id&gt;.html</code>): two Orbio agents or more, or a copier ring. Wallets are grouped when one gave another its first
 ETH through throwaway wallets only, so an exchange or a busy wallet never joins two. It suggests one operator; it doesn't prove
 one. The id is the group's earliest wallet on file, and changes if a later trace reaches further back.</li>
+<li><code>flags[]</code> say how the token came to be on file, and warn. <code>VAULT</code>: launched through Orbio's launchpad.
+<code>WIDE</code>: launched on Pons outside Orbio and checked on request. It says how the file came about, never what the verdict is
+(a <code>WIDE</code> token can be verified). It gets a page on the site only when Orbio agents copy it, and {NAME} doesn't re-check
+it on a schedule, though a verified one's claim is still checked daily. The warnings:
+<ul>{"".join(f"<li><code>{k}</code>: {e(v[0].lower() + v[1:])}</li>" for k, v in FLAGS.items())}</ul></li>
 <li><code>timeline.verified_at</code> is when {NAME} first saw an official channel claim the token.</li>
 <li><code>status</code> is <code>PROVEN</code>, <code>LIVE</code>, <code>BUILDING</code>, <code>UNPROVEN</code>, <code>ABANDONED</code> or
 <code>SCAM</code> (<a href="method.html#5-status">rules</a>). <code>facts[]</code> are the score lines.</li></ul>
