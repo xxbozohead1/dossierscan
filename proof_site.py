@@ -2459,7 +2459,7 @@ has no limit.</p>
 <code>api/v1/tokens/&lt;address&gt;.json</code> of any other token launched on Pons, the launchpad behind Orbio and most launches on
 Robinhood Chain. The first request answers 202 with
 <code>"status": "checking"</code> while {NAME} reads the project's X account and site; ask the same URL again and the file is there,
-usually within a minute, in the same shape with <code>"on_demand": true</code> and the flag <code>WIDE</code>. A key can ask for 25
+usually within a minute, in the same shape with <code>"on_demand": true</code>. A key can ask for 25
 checks a day, and an address that isn't a launch doesn't count. An unverified token's file gives <code>recheck_after</code>, 6 hours
 after its channels were last read: a request after that checks it again. Orbio agents never need this: each one has a file from its
 first seconds, so ask for it as you would any other.</p>
@@ -2501,9 +2501,10 @@ the token's extra creator fee on every buy and sell, on top of Pons's 1%.</li>
 ETH through throwaway wallets only, so an exchange or a busy wallet never joins two. It suggests one operator; it doesn't prove
 one. The id is the group's earliest wallet on file, and changes if a later trace reaches further back.</li>
 <li><code>flags[]</code> say how the token came to be on file, and warn. <code>VAULT</code>: launched through Orbio's launchpad.
-<code>WIDE</code>: launched on Pons outside Orbio and checked on request. It says how the file came about, never what the verdict is
-(a <code>WIDE</code> token can be verified). It gets a page on the site only when Orbio agents copy it, and {NAME} doesn't re-check
-it on a schedule, though a verified one's claim is still checked daily. The warnings:
+<code>WIDE</code>: launched on Pons outside Orbio, and first read beyond {NAME}'s Orbio coverage: on request, or in its chain-wide trial
+(30 Sep–3 Oct). It says how the file came about, never what the verdict is (a <code>WIDE</code> token can be verified). It gets a page
+on the site only when a token on the site copies it, and {NAME} doesn't re-check it on a schedule, though a verified one's claim is
+still checked daily. A file checked on request carries <code>"on_demand": true</code> whatever its flags. The warnings:
 <ul>{"".join(f"<li><code>{k}</code>: {e(v[0].lower() + v[1:])}</li>" for k, v in FLAGS.items())}</ul></li>
 <li><code>timeline.verified_at</code> is when {NAME} first saw an official channel claim the token.</li>
 <li><code>status</code> is <code>PROVEN</code>, <code>LIVE</code>, <code>BUILDING</code>, <code>UNPROVEN</code>, <code>ABANDONED</code> or
