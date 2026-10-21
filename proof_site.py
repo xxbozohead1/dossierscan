@@ -279,7 +279,7 @@ FAVICON = "data:image/svg+xml," + urllib.parse.quote(
     "<circle cx='16' cy='16' r='7.4' stroke-width='1.4'/><path d='M12.7 16.2l2.4 2.4 4.5-4.9' stroke-width='2.7' "
     "stroke-linecap='round' stroke-linejoin='round'/></g></svg>", safe=":/=' ")
 LOGO = ROOT / "static" / "logo.png"  # the full seal, 512x512: the $DOSSIER page and the home-screen icon
-NAV = (("index.html#live", "New launches"), ("index.html#board", "Board"), ("scams.html", "Impersonators"),
+NAV = (("numbers.html", "Numbers"), ("index.html#live", "New launches"), ("index.html#board", "Board"), ("scams.html", "Impersonators"),
        ("operators.html", "Operators"), ("apps.html", "Apps"), ("work.html", "At work"), ("token.html", "$DOSSIER"),
        ("method.html", "Method"), ("api.html", "API"))
 
@@ -1773,6 +1773,86 @@ balance only its own account can see, so it shows here only where that account h
 <tbody>{body or '<tr><td colspan="9" class="muted">No agent has earned compute yet.</td></tr>'}</tbody></table></div></section>"""
 
 
+# ----------------------------------------------------------------- Orbio in numbers
+
+def day_bars(days: list[dict], parts: tuple, label: str, unit: str) -> str:
+    """Days side by side, each a stack of `parts` ((key, name, class), bottom first) on one scale: the busiest day's total,
+    which is labelled. Each day's figures are in its tooltip, and the chart's label sums them up for screen readers."""
+    tot = [sum(d[k] for k, _, _ in parts) for d in days]
+    top = max(tot) or 1
+    day = lambda d: dt.datetime.strptime(d["day"], "%Y-%m-%d").strftime("%d %b").lstrip("0")  # noqa: E731
+    cols = "".join(f'<span class="dc" title="{day(d)}: ' + " · ".join(f"{num(d[k])} {e(name)}" for k, name, _ in parts) + '">'
+                   + "".join(f'<i class="{cls}" style="height:{100 * d[k] / top:.2f}%"></i>' for k, _, cls in parts if d[k])
+                   + "</span>" for d in days)
+    legend = "".join(f'<span><i class="{cls}"></i>{e(name)}</span>' for _, name, cls in parts)
+    return (f'<figure class="dchart"><p class="dtop">{num(top, unit)}</p>'
+            f'<div class="dbars" role="img" aria-label="{e(label)}: {num(sum(tot), unit)} over {len(days)} days, '
+            f'{num(top, unit)} on the busiest">{cols}</div>'
+            f'<p class="daxis"><span>{day(days[0])}</span><span>{day(days[-1])}</span></p>'
+            f'<figcaption class="dlegend">{legend}</figcaption></figure>')
+
+
+def numbers_page(feed: dict) -> str:
+    """Orbio's agent economy in numbers (user, 22 Oct: Dossier as Orbio's data layer): what agents' fees earn, where it goes,
+    and who turns CREDIT into compute, from proof_index.network_numbers."""
+    n = feed.get("numbers")
+    if not n:
+        return '<section class="page-head"><h1>Orbio in numbers</h1><p class="sub">The numbers are being gathered.</p></section>'
+    c, s, sell, days = n["credit"], n["stake"], n["selloff"], n["days"]
+    act = {k: n["activations"].get(k) or {"credit": 0, "accounts": 0} for k in ("exchange", "own", "other")}
+    acts = sum(x["credit"] for x in act.values())
+    share = lambda x, of: f"{100 * x / of:.1f}%" if of else "—"  # noqa: E731
+    handled = c["activated"] + c["held"] + c["moved_out"]
+    went = "".join(f"""<div class="wrow k-{kind}"><span class="wl"><b>{label}</b><small>{note}</small></span>
+<span class="wtrack" aria-hidden="true"><i style="width:{100 * c[key] / handled if handled else 0:.1f}%"></i></span>
+<span class="wpct">{share(c[key], handled)}</span><span class="wamt">{num(c[key])} <small>CREDIT</small></span><span class="wn"></span></div>"""
+                   for kind, label, key, note in WORK_KINDS)
+    who = (("exchange", "Orbio’s exchange", "bought on Orbio’s exchange and activated straight into the buyer’s account", "s-acc"),
+           ("own", "its holder", "activated by the wallet holding it, agents’ wallets included", "s-ok"),
+           ("other", "for another account", "activated for another account, the agent vault’s included when an owner takes "
+                                            "stake out", "s-mut"))
+    legend = "".join(f'<li><i class="{cls}"></i><b>{num(act[k]["credit"])} CREDIT</b> {note}: '
+                     f'{plural(act[k]["accounts"], "account")}</li>' for k, _, note, cls in who)
+    launches = [{**d, "rest": d["launches"] - d["verified"] - d["copies"]} for d in days]
+    return f"""<section class="page-head"><p class="kicker">Orbio in numbers</p><h1>What Orbio’s agent economy is doing</h1>
+<p class="sub">Read from the chain and Orbio’s public API, not from what anyone says: what agents’ trading fees earn, where it
+goes, and who turns CREDIT into compute. Every Orbio agent counts, copies included. Updated every few minutes.</p>
+<dl class="tally"><div><dt>Orbio agents</dt><dd>{n["agents"]:,}</dd></div>
+<div><dt>CREDIT turned into compute</dt><dd class="ok">{num(acts)}</dd></div>
+<div><dt>of it bought on Orbio’s exchange</dt><dd>{share(act["exchange"]["credit"], acts)}</dd></div>
+<div><dt>agents’ own CREDIT put to work</dt><dd class="warn">{share(c["activated"], handled)}</dd></div>
+<div><dt>agents’ staked ORBIO taken back out</dt><dd class="bad">{share(s["withdrawn"], s["staked"])}</dd></div>
+<div><dt>AI balance agents earned</dt><dd>{usd(n["ai_earned"])}</dd></div>
+<div><dt>launches that copied a project</dt><dd class="bad">{share(n["copies"], n["agents"])}</dd></div>
+<div><dt>first-10-second buyers out in 30 min</dt><dd class="bad">{share(sell["sold"], sell["buyers"])}</dd></div></dl></section>
+<section class="nsec" aria-labelledby="who-h"><h2 id="who-h">Who turns CREDIT into compute</h2>
+<p class="sub">Activating CREDIT burns it into an Orbio account’s compute balance, so it is what compute is actually bought with.
+Every activation since 1 October, by who sent it.</p><ul class="nlegend">{legend}</ul>
+{day_bars(days, tuple((k, name, cls) for k, name, _, cls in who), "CREDIT activated per day", "CREDIT")}</section>
+<section class="where nsec" aria-labelledby="went-h"><h2 id="went-h">Where agents’ own CREDIT went</h2>
+<p class="sub">The {num(c["minted"])} CREDIT agents’ fees minted to their wallets, by what each wallet did with it.
+CREDIT moved out can still become compute in someone else’s hands: that is the chart above.
+<a href="work.html">Every agent’s CREDIT →</a></p><div class="wbars">{went}</div></section>
+<section class="nsec" aria-labelledby="stake-h"><h2 id="stake-h">Stake taken out</h2>
+<p class="sub">Half of an agent’s fees is staked as ORBIO. Since 1 October an owner can take it out at any time:
+{plural(s["owners_out"], "owner")} have taken {num(s["withdrawn"])} of the {num(s["staked"])} ORBIO staked.</p>
+{day_bars(days, (("pulled", "ORBIO taken out", "s-bad"),), "ORBIO taken out of agents’ stake per day", "ORBIO")}</section>
+<section class="nsec" aria-labelledby="launch-h"><h2 id="launch-h">Launches</h2>
+<p class="sub">Orbio agents launched each day, by what Dossier found: the project’s own token, a copy of a project, or
+neither proven.</p>
+{day_bars(launches, (("verified", "the project’s own", "s-ok"), ("copies", "copies", "s-bad"), ("rest", "neither proven", "s-mut")),
+           "Orbio agents launched per day", "")}
+<p class="muted small">Of the {sell["buyers"]:,} wallets that bought an agent in its first 10 seconds, {sell["sold"]:,} had sold
+within 30 minutes.</p></section>
+<section class="method"><h2>How it’s measured</h2><ul>
+<li>CREDIT activations are CREDIT’s own <code>Activated</code> logs since 1 October. Orbio’s exchange is the address Orbio
+publishes (<code>/api/protocol/status</code>).</li>
+<li>CREDIT minted, held and moved out, the AI balance and the stake come from Orbio’s agents API and the chain, per agent.</li>
+<li>What an account spends from its compute balance isn’t on the chain, so it isn’t here.</li>
+<li>The same figures are in <a href="api/v1/numbers.json"><code>api/v1/numbers.json</code></a>, with one snapshot of the totals
+a day from 22 October.</li></ul></section>"""
+
+
 # ----------------------------------------------------------------- Sign in with Orbio apps
 
 APP_FEE_HIGH = 1000  # bps
@@ -2477,6 +2557,10 @@ Short keys, to keep it small.</td></tr>
 agents point to: what Orbio's consent page says about it (name, the host it sends people back to, fee and its changes), the
 scopes it asks for, where it was seen, and <code>status</code>: <code>official</code>, <code>unverified</code> or
 <code>impersonator</code>.</td></tr>
+<tr><td><a href="api/v1/numbers.json"><code>api/v1/numbers.json</code></a></td><td>Orbio's agent economy as a whole: CREDIT
+activated into compute by who sent it, agents' CREDIT put to work, held and moved out, the AI balance they earned, stake taken
+out, copies and launch sell-offs; the last 30 days day by day (<code>days</code>), and one snapshot of the totals a day from
+22 October (<code>history</code>).</td></tr>
 <tr><td><a href="api/v1/operators.json"><code>api/v1/operators.json</code></a></td><td>The operators with a page: id, label,
 whether it is a copier ring, its counts by verdict, its wallets and its first and last launch.</td></tr>
 <tr><td><code>api/v1/operators/&lt;id&gt;.json</code></td><td>One operator, as its page shows it: its wallets with their
@@ -2686,6 +2770,16 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .wpct{font:700 24px/1 var(--mono);color:var(--k);font-variant-numeric:tabular-nums;text-align:right;min-width:3.2ch}
 .wamt{font:500 14px var(--mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}.wamt small{color:var(--muted);font-size:11px}
 .wn{font-size:13px;color:var(--accent);white-space:nowrap}.wrow:disabled .wn{color:var(--muted)}
+.nsec{margin-top:48px}.s-acc{--s:var(--accent)}.s-ok{--s:var(--ok)}.s-bad{--s:var(--bad)}.s-mut{--s:color-mix(in srgb,var(--muted) 55%,transparent)}
+.dchart{margin:18px 0 0}.dtop,.daxis{margin:0;font:500 12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.dbars{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:3px;height:170px;margin:6px 0;
+  border-bottom:1px solid var(--rule-2);background:linear-gradient(var(--rule) 1px,transparent 1px) 0 0/100% 50%}
+.dc{display:flex;flex-direction:column-reverse;height:100%;min-width:0}.dc:hover{background:color-mix(in srgb,var(--muted) 10%,transparent)}
+.dc i{display:block;background:var(--s)}.dc i:last-child{border-radius:3px 3px 0 0}
+.daxis{display:flex;justify-content:space-between}
+.dlegend,.nlegend{display:flex;flex-wrap:wrap;gap:6px 18px;margin:10px 0 0;font-size:13px;color:var(--ink-2)}
+.nlegend{flex-direction:column;list-style:none;padding:0;margin-top:14px;font-size:14px}
+.dlegend i,.nlegend i{display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--s);margin-right:7px;vertical-align:0}
 .wrow[aria-pressed=true] .wn{color:var(--k);font-weight:600}
 .workboard{margin-top:44px}.workboard .filter{max-width:460px}
 .did{display:inline-block;font:600 12.5px/1.2 var(--sans);padding:4px 10px;border-radius:999px;white-space:nowrap;background:var(--k-bg);color:var(--k)}
@@ -3925,7 +4019,8 @@ def list_pages(feed: dict, home_too: bool = True) -> list[tuple[str, str, str]]:
         ("scams.html", f"Impersonators caught · {NAME}", scams_page(feed)),
         ("operators.html", f"Operators behind Orbio launches · {NAME}", operators_page(feed)),
         ("apps.html", f"Sign in with Orbio apps · {NAME}", apps_page(feed)),
-        ("work.html", f"What Orbio agents do with their compute budget · {NAME}", work_page(feed))]
+        ("work.html", f"What Orbio agents do with their compute budget · {NAME}", work_page(feed)),
+        ("numbers.html", f"Orbio in numbers · {NAME}", numbers_page(feed))]
 
 
 def replace_text(path: Path, text: str) -> None:
@@ -4013,7 +4108,8 @@ def build(feed: dict, out: Path = OUT, tick=None) -> int:
     (tmp / "robots.txt").write_text("User-agent: *\nAllow: /\n" + (f"Sitemap: {site}/sitemap.xml\n" if site else ""), "utf-8")
     if site:
         live_cases = [c for c in CASES if c.get("status") == "published"]  # never a draft, even on the dev server
-        pages = ["", "agents.html", "scams.html", "operators.html", "apps.html", "work.html", "token.html", "method.html", "api.html"] \
+        pages = ["", "numbers.html", "agents.html", "scams.html", "operators.html", "apps.html", "work.html", "token.html",
+                 "method.html", "api.html"] \
             + [f't/{t["token"]}.html' for t in feed["tokens"]] + [f'o/{o["id"]}.html' for o in ops] \
             + (["cases.html"] + [f'case/{c["slug"]}.html' for c in live_cases] if live_cases else [])
         # a file's last change, so a search engine reads a verdict again when it changes: launch, verified or flagged
@@ -4048,8 +4144,10 @@ def build(feed: dict, out: Path = OUT, tick=None) -> int:
          "operators": [{k: o[k] for k in ("id", "label", "accounts", "copier_ring", "counts", "first_launch", "last_launch")}
                        | {"wallets": len(o["wallets"])} for o in ops]}, ensure_ascii=False), "utf-8")
     # the operators have endpoints of their own (above): feed.json keeps its shape, with "operator" on each token that has one
-    (tmp / "api" / "v1" / "feed.json").write_text(json.dumps({k: v for k, v in feed.items() if k != "operators"},
+    (tmp / "api" / "v1" / "feed.json").write_text(json.dumps({k: v for k, v in feed.items() if k not in ("operators", "numbers")},
                                                              ensure_ascii=False), "utf-8")
+    (tmp / "api" / "v1" / "numbers.json").write_text(json.dumps(
+        {"method": feed["method"], "generated_at": feed["generated_at"], **(feed.get("numbers") or {})}, ensure_ascii=False), "utf-8")
     (tmp / "api" / "v1" / "apps.json").write_text(json.dumps(
         {"method": feed["method"], "generated_at": feed["generated_at"], "apps": feed.get("apps") or []}, ensure_ascii=False), "utf-8")
     write_live(feed, tmp)
