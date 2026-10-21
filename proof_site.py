@@ -1813,7 +1813,7 @@ def numbers_page(feed: dict) -> str:
                                             "stake out", "s-mut"))
     legend = "".join(f'<li><i class="{cls}"></i><b>{num(act[k]["credit"])} CREDIT</b> {note}: '
                      f'{plural(act[k]["accounts"], "account")}</li>' for k, _, note, cls in who)
-    launches = [{**d, "rest": d["launches"] - d["verified"] - d["copies"]} for d in days]
+    launches = [{**d, "rest": d["launches"] - d["verified"] - d["copies"] - d["linked"]} for d in days]
     return f"""<section class="page-head"><p class="kicker">Orbio in numbers</p><h1>What Orbio’s agent economy is doing</h1>
 <p class="sub">Read from the chain and Orbio’s public API, not from what anyone says: what agents’ trading fees earn, where it
 goes, and who turns CREDIT into compute. Every Orbio agent counts, copies included. Updated every few minutes.</p>
@@ -1824,6 +1824,7 @@ goes, and who turns CREDIT into compute. Every Orbio agent counts, copies includ
 <div><dt>agents’ staked ORBIO taken back out</dt><dd class="bad">{share(s["withdrawn"], s["staked"])}</dd></div>
 <div><dt>AI balance agents earned</dt><dd>{usd(n["ai_earned"])}</dd></div>
 <div><dt>launches that copied a project</dt><dd class="bad">{share(n["copies"], n["agents"])}</dd></div>
+<div><dt>launched from a copier’s wallets</dt><dd class="warn">{share(n["linked"], n["agents"])}</dd></div>
 <div><dt>first-10-second buyers out in 30 min</dt><dd class="bad">{share(sell["sold"], sell["buyers"])}</dd></div></dl></section>
 <section class="nsec" aria-labelledby="who-h"><h2 id="who-h">Who turns CREDIT into compute</h2>
 <p class="sub">Activating CREDIT burns it into an Orbio account’s compute balance, so it is what compute is actually bought with.
@@ -1838,9 +1839,10 @@ CREDIT moved out can still become compute in someone else’s hands: that is the
 {plural(s["owners_out"], "owner")} have taken {num(s["withdrawn"])} of the {num(s["staked"])} ORBIO staked.</p>
 {day_bars(days, (("pulled", "ORBIO taken out", "s-bad"),), "ORBIO taken out of agents’ stake per day", "ORBIO")}</section>
 <section class="nsec" aria-labelledby="launch-h"><h2 id="launch-h">Launches</h2>
-<p class="sub">Orbio agents launched each day, by what Dossier found: the project’s own token, a copy of a project, or
-neither proven.</p>
-{day_bars(launches, (("verified", "the project’s own", "s-ok"), ("copies", "copies", "s-bad"), ("rest", "neither proven", "s-mut")),
+<p class="sub">Orbio agents launched each day, by what Dossier found: the project’s own token, a copy of a project, a
+launch from wallets a copier funded, or none of these proven.</p>
+{day_bars(launches, (("verified", "the project’s own", "s-ok"), ("copies", "copies", "s-bad"),
+                     ("linked", "from a copier’s wallets", "s-warn"), ("rest", "none proven", "s-mut")),
            "Orbio agents launched per day", "")}
 <p class="muted small">Of the {sell["buyers"]:,} wallets that bought an agent in its first 10 seconds, {sell["sold"]:,} had sold
 within 30 minutes.</p></section>
@@ -2770,7 +2772,7 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .wpct{font:700 24px/1 var(--mono);color:var(--k);font-variant-numeric:tabular-nums;text-align:right;min-width:3.2ch}
 .wamt{font:500 14px var(--mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}.wamt small{color:var(--muted);font-size:11px}
 .wn{font-size:13px;color:var(--accent);white-space:nowrap}.wrow:disabled .wn{color:var(--muted)}
-.nsec{margin-top:48px}.s-acc{--s:var(--accent)}.s-ok{--s:var(--ok)}.s-bad{--s:var(--bad)}.s-mut{--s:color-mix(in srgb,var(--muted) 55%,transparent)}
+.nsec{margin-top:48px}.s-acc{--s:var(--accent)}.s-warn{--s:var(--warn)}.s-ok{--s:var(--ok)}.s-bad{--s:var(--bad)}.s-mut{--s:color-mix(in srgb,var(--muted) 55%,transparent)}
 .dchart{margin:18px 0 0}.dtop,.daxis{margin:0;font:500 12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
 .dbars{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:3px;height:170px;margin:6px 0;
   border-bottom:1px solid var(--rule-2);background:linear-gradient(var(--rule) 1px,transparent 1px) 0 0/100% 50%}
