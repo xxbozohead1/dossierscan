@@ -279,7 +279,7 @@ FAVICON = "data:image/svg+xml," + urllib.parse.quote(
     "<circle cx='16' cy='16' r='7.4' stroke-width='1.4'/><path d='M12.7 16.2l2.4 2.4 4.5-4.9' stroke-width='2.7' "
     "stroke-linecap='round' stroke-linejoin='round'/></g></svg>", safe=":/=' ")
 LOGO = ROOT / "static" / "logo.png"  # the full seal, 512x512: the $DOSSIER page and the home-screen icon
-NAV = (("numbers.html", "Numbers"), ("index.html#live", "New launches"), ("index.html#board", "Board"), ("scams.html", "Impersonators"),
+NAV = (("index.html", "Numbers"), ("launches.html#live", "New launches"), ("launches.html#board", "Board"), ("scams.html", "Impersonators"),
        ("operators.html", "Operators"), ("apps.html", "Apps"), ("work.html", "At work"), ("token.html", "$DOSSIER"),
        ("method.html", "Method"), ("api.html", "API"))
 
@@ -326,7 +326,7 @@ def inert(s: str) -> str:
     return s.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
-DESC = "Which Orbio launch is the real one? A file on every agent, with receipts."
+DESC = "Orbio in numbers: who earns the fees, who buys compute, what agents keep, and a file on every agent."
 OG_IMAGE = ROOT / "static" / "og.png"  # the link-preview card, 1200x630
 
 
@@ -1125,7 +1125,7 @@ def not_found_page() -> str:
     other tokens only once a project claims them."""
     return f"""<section class="page-head notfound"><h1>No file here</h1>
 <p class="sub" id="nf">This page doesn't exist. The link may be mistyped, or out of date.</p>
-<p class="more"><a href="/index.html#live">New launches</a> · <a href="/agents.html">Every Orbio agent</a> ·
+<p class="more"><a href="/launches.html#live">New launches</a> · <a href="/agents.html">Every Orbio agent</a> ·
 <a href="/scams.html">Impersonators</a></p></section>
 <script>(function(){{var m=location.pathname.match(/\\/t\\/(0x[0-9a-fA-F]{{40}})(\\.html)?$/);if(!m)return;var a=m[1].toLowerCase();
 document.getElementById('nf').innerHTML='{NAME} has no file on <code>'+a+'</code> yet. New Orbio agents get one within a minute '+
@@ -1304,7 +1304,7 @@ def token_page(t: dict, feed: dict) -> str:
             "meme": "Claims no project", "tribute": f"Named after @{(t.get('meme') or {}).get('of') or '?'}",
             "copycat": "A later launch of this meme"}[s]
     badges = "".join(f'<span class="badge">{e(b.title())}</span>' for b in t.get("badges") or [] if b != "ORBIO AGENT")
-    return f"""<div class="filepage" data-t="{addr}"><p class="crumb"><a href="../index.html#live">← New launches</a></p>
+    return f"""<div class="filepage" data-t="{addr}"><p class="crumb"><a href="../launches.html#live">← New launches</a></p>
 <article class="file v-{s}">
 <div class="file-tab">{"File No. " + str(agent) + " · Orbio agent" if agent else
                         "Listed on Orbio · not launched through its launchpad" if listed else "Pons launch"}</div>
@@ -4183,14 +4183,16 @@ def token_json(t: dict, feed: dict) -> str:
 
 
 def list_pages(feed: dict, home_too: bool = True) -> list[tuple[str, str, str]]:
-    """(path, title, body) of the pages that list tokens: the home page, every agent, the impersonators."""
-    return ([("index.html", f"{NAME}: which Orbio launch is the real one?", home(feed))] if home_too else []) + [
+    """(path, title, body) of the pages built from the whole feed. `home_too` adds the two the hot lane leaves to the full
+    build: the front page, Orbio in numbers (its figures change with each export, not with a launch), and new launches (it
+    draws launches and verdicts from live.json itself, and its launch map is slow to lay out)."""
+    return ([("index.html", f"{NAME}: Orbio in numbers", numbers_page(feed)),
+             ("launches.html", f"New Orbio launches · {NAME}", home(feed))] if home_too else []) + [
         ("agents.html", f"Every Orbio agent · {NAME}", agents_page(feed)),
         ("scams.html", f"Impersonators caught · {NAME}", scams_page(feed)),
         ("operators.html", f"Operators behind Orbio launches · {NAME}", operators_page(feed)),
         ("apps.html", f"Sign in with Orbio apps · {NAME}", apps_page(feed)),
-        ("work.html", f"What Orbio agents do with their compute budget · {NAME}", work_page(feed)),
-        ("numbers.html", f"Orbio in numbers · {NAME}", numbers_page(feed))]
+        ("work.html", f"What Orbio agents do with their compute budget · {NAME}", work_page(feed))]
 
 
 def replace_text(path: Path, text: str) -> None:
@@ -4278,7 +4280,7 @@ def build(feed: dict, out: Path = OUT, tick=None) -> int:
     (tmp / "robots.txt").write_text("User-agent: *\nAllow: /\n" + (f"Sitemap: {site}/sitemap.xml\n" if site else ""), "utf-8")
     if site:
         live_cases = [c for c in CASES if c.get("status") == "published"]  # never a draft, even on the dev server
-        pages = ["", "numbers.html", "agents.html", "scams.html", "operators.html", "apps.html", "work.html", "token.html",
+        pages = ["", "launches.html", "agents.html", "scams.html", "operators.html", "apps.html", "work.html", "token.html",
                  "method.html", "api.html"] \
             + [f't/{t["token"]}.html' for t in feed["tokens"]] + [f'o/{o["id"]}.html' for o in ops] \
             + (["cases.html"] + [f'case/{c["slug"]}.html' for c in live_cases] if live_cases else [])
