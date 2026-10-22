@@ -279,9 +279,19 @@ FAVICON = "data:image/svg+xml," + urllib.parse.quote(
     "<circle cx='16' cy='16' r='7.4' stroke-width='1.4'/><path d='M12.7 16.2l2.4 2.4 4.5-4.9' stroke-width='2.7' "
     "stroke-linecap='round' stroke-linejoin='round'/></g></svg>", safe=":/=' ")
 LOGO = ROOT / "static" / "logo.png"  # the full seal, 512x512: the $DOSSIER page and the home-screen icon
-NAV = (("index.html", "Numbers"), ("launches.html#live", "New launches"), ("launches.html#board", "Board"), ("scams.html", "Impersonators"),
-       ("operators.html", "Operators"), ("apps.html", "Apps"), ("work.html", "At work"), ("token.html", "$DOSSIER"),
-       ("method.html", "Method"), ("api.html", "API"))
+# a link (href, label), or a menu (label, ((href, label, what it is), …)); eleven links in one row were too many (user, 22 Oct)
+NAV = (("index.html", "Numbers"),
+       ("Agents", (("launches.html#live", "New launches", "every Orbio launch as it lands"),
+                   ("launches.html#board", "The board", "agents ranked by what they’ve proven"),
+                   ("agents.html", "Every agent", "the whole list, to sort and search"),
+                   ("work.html", "At work", "what agents do with their CREDIT"))),
+       ("Risk", (("scams.html", "Impersonators", "copies of real projects"),
+                 ("operators.html", "Operators", "the wallets behind many launches"),
+                 ("cases.html", "Case files", "deep dives that follow the money"),
+                 ("apps.html", "Sign in apps", "Sign in with Orbio apps and their fees"))),
+       ("api.html", "API"),
+       ("About", (("method.html", "Method", "how Dossier checks a token"),
+                  ("token.html", "$DOSSIER", "the token that pays for the checks"))))
 
 
 # dark is the default; the switch keeps a viewer's choice of light in this browser. THEME_BOOT sits in <head> and applies
@@ -296,10 +306,13 @@ THEME_SWITCH = ('<button type="button" class="theme" role="switch" aria-checked=
 
 
 def header(up: str = "") -> str:
-    items = list(NAV)
-    if CASES:  # the case files, next to the impersonators, once there is one to show
-        items.insert(3, ("cases.html", "Cases"))
-    nav = "".join(f'<a href="{up}{href}">{label}</a>' for href, label in items)
+    def entry(a, b) -> str:
+        if isinstance(b, str):
+            return f'<a href="{up}{a}">{b}</a>'
+        links = "".join(f'<a href="{up}{href}"><b>{label}</b><small>{what}</small></a>' for href, label, what in b
+                        if CASES or href != "cases.html")  # the case files, once there is one to show
+        return f'<details class="menu"><summary>{a}</summary><div class="panel">{links}</div></details>'
+    nav = "".join(entry(a, b) for a, b in NAV)
     return (f'<header class="top"><div class="wrap"><a class="brand" href="{up}index.html">{MARK}{NAME}</a>'
             f'<nav aria-label="Sections">{nav}</nav>{THEME_SWITCH}</div></header>')
 
@@ -2935,7 +2948,16 @@ h2{font-size:22px;line-height:1.2;font-weight:700;font-stretch:92%}h3{font-size:
 .top .wrap{display:flex;align-items:center;gap:8px 28px;min-height:58px;flex-wrap:wrap;padding-block:8px}
 .brand{display:flex;align-items:center;gap:8px;color:var(--ink);font:800 21px/1 var(--display);font-stretch:85%;letter-spacing:-.01em}
 .brand:hover{text-decoration:none}.mark{width:26px;height:26px;color:var(--ok)}
-.top nav{display:flex;gap:4px 18px;flex-wrap:wrap;font-weight:500}.top nav a{color:var(--ink-2)}
+.top nav{display:flex;align-items:center;gap:4px 22px;flex-wrap:wrap;font-weight:500}.top nav a,.menu summary{color:var(--ink-2)}
+.menu{position:relative}.menu summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:5px}
+.menu summary::-webkit-details-marker{display:none}.menu summary:hover,.menu[open] summary{color:var(--ink)}
+.menu summary::after{content:"";width:6px;height:6px;margin-top:-3px;border:solid currentColor;border-width:0 1.5px 1.5px 0;
+  transform:rotate(45deg);transition:transform .15s}.menu[open] summary::after{transform:rotate(225deg);margin-top:3px}
+.menu .panel{position:absolute;top:calc(100% + 12px);left:-12px;z-index:40;display:grid;gap:2px;width:max-content;max-width:min(300px,86vw);
+  padding:6px;background:var(--sheet);border:1px solid var(--rule-2);border-radius:12px;box-shadow:0 14px 40px rgba(0,0,0,.35)}
+.menu:last-child .panel{left:auto;right:-12px}
+.menu .panel a{display:grid;gap:1px;padding:8px 12px;border-radius:8px}.menu .panel a:hover{background:var(--sheet-2);text-decoration:none}
+.menu .panel b{color:var(--ink);font-weight:600}.menu .panel small{color:var(--muted);font-size:12.5px}
 .theme{position:relative;flex:none;display:inline-flex;align-items:center;justify-content:space-between;width:54px;height:28px;
   margin-left:auto;padding:0 7px;border:1px solid var(--rule-2);border-radius:999px;background:var(--sheet-2);color:var(--muted);cursor:pointer}
 .theme svg{position:relative;z-index:1;width:13px;height:13px;transition:color .2s}
@@ -3599,9 +3621,9 @@ th[aria-sort=descending] button::after{content:" ↓"}th[aria-sort=ascending] bu
 @media (max-width:560px){
 .top .wrap{position:relative;flex-direction:column;align-items:stretch;flex-wrap:nowrap;gap:4px;padding-block:12px 2px}
 .theme{position:absolute;top:12px;right:16px}
-.top nav{flex-wrap:nowrap;overflow-x:auto;gap:2px;margin:0 -16px;padding:0 10px;scrollbar-width:none;
-  -webkit-mask-image:linear-gradient(90deg,#000 85%,transparent);mask-image:linear-gradient(90deg,#000 85%,transparent)}
-.top nav::-webkit-scrollbar{display:none}.top nav a{flex:none;padding:9px 8px;border-radius:8px}
+.top nav{flex-wrap:nowrap;gap:2px;margin:0 -8px}
+.top nav>a,.menu summary{flex:none;padding:9px 8px;border-radius:8px}
+.top nav{position:relative}.menu{position:static}.menu .panel,.menu:last-child .panel{top:100%;left:8px;right:8px;width:auto;max-width:none}
 .tally{display:grid;grid-template-columns:1fr 1fr;gap:16px 18px}
 .filters{flex-wrap:nowrap;overflow-x:auto;margin:0 -16px;padding:2px 16px;scrollbar-width:none}
 .filters::-webkit-scrollbar{display:none}.filters button{flex:none;padding:8px 13px}
@@ -3641,6 +3663,11 @@ JS = r"""
     if(light)HTML.setAttribute('data-theme','light');else HTML.removeAttribute('data-theme');
     try{localStorage.setItem('dossier.theme',light?'light':'dark')}catch(e){}themeSync()});
   themeSync();
+  // the nav's menus (<details>): one open at a time, closed by a click elsewhere or Escape
+  document.addEventListener('click',function(ev){document.querySelectorAll('.menu[open]').forEach(function(m){
+    if(!m.contains(ev.target))m.open=false})});
+  document.addEventListener('keydown',function(ev){if(ev.key==='Escape')document.querySelectorAll('.menu[open]').forEach(function(m){
+    m.open=false;m.querySelector('summary').focus()})});
   var LABEL={verified:'Verified',scam:'Impersonator',linked:'Impersonator’s wallet',checking:'Checking',unverified:'Unverified',
     meme:'Meme',tribute:'Tribute',copycat:'Copycat'},SUB='₀₁₂₃₄₅₆₇₈₉';
   var ORDER={verified:3,checking:2,unverified:1,scam:0,linked:0},filterKey='all',VTEXT=@@VTEXT@@;
