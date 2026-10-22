@@ -1814,9 +1814,10 @@ def numbers_insights(n: dict) -> list[str]:
     work = pct(c["activated"], c["activated"] + c["held"] + c["moved_out"])
     out = []
     if real > 50:
-        out.append(f"<b>Real projects earn the fees.</b> The {n['verified']} agents their own project claims are "
-                   f"{pct(n['verified'], n['agents']):.1f}% of all agents, and they earned {real:.0f}% of every trading fee. "
-                   f"Copies of real projects earned {pct(f['by'].get('scam', 0), f['orbio']):.0f}%.")
+        out.append(f"<b>Real projects earn the fees.</b> The {n['verified']} agents their own project claims are only "
+                   f"{pct(n['verified'], n['agents']):.1f}% of all agents, yet {real:.0f}% of all the trading fees agents have "
+                   f"earned came from trading them. Copies of real projects drew {pct(f['by'].get('scam', 0), f['orbio']):.0f}%: "
+                   f"traders’ money mostly goes to the real thing.")
     if new7 > before and new7 >= 7:
         out.append(f"<b>More people are buying compute.</b> {new7} new accounts bought CREDIT on Orbio’s exchange in the last 7 days, "
                    f"against {before} the week before.")
