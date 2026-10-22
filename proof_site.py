@@ -1875,7 +1875,23 @@ def numbers_page(feed: dict) -> str:
     launches = [{**d, "rest": d["launches"] - d["verified"] - d["copies"] - d["linked"]} for d in days]
     said = numbers_insights(n)
     lead = lambda k: f'<p class="nlead">{said[k]}</p>' if k in said else ""  # noqa: E731 -- the two compute sections open with theirs
-    insights = "".join(f"<li>{x}</li>" for k, x in said.items() if k not in ("bought", "buyers"))
+    insights = "".join(f"<li>{x}</li>" for k, x in said.items() if k not in ("bought", "buyers", "top10"))
+    pc = lambda x, of: "—" if not of else "<1%" if 0 < x < of / 100 else f"{100 * x / of:.0f}%"  # noqa: E731 -- some isn't none
+    top = n.get("top") or []
+    top_rows = "".join(
+        f'<tr><td class="numcol">{i}</td><td>{tref(t)}</td><td>{chip(t["verdict"]) if t["verdict"] in STATE else ""}</td>'
+        f'<td class="numcol">{num(t["fees"])}</td><td><span class="tshare k-acc"><span class="wtrack" aria-hidden="true">'
+        f'<i style="width:{100 * t["fees"] / f["orbio"] if f["orbio"] else 0:.1f}%"></i></span>{share(t["fees"], f["orbio"])}</span></td>'
+        f'<td class="numcol">{pc(t["credit"]["activated"], t["credit"]["minted"])}</td>'
+        f'<td class="numcol">{pc(t["stake"]["withdrawn"], t["stake"]["staked"])}</td></tr>' for i, t in enumerate(top, 1))
+    real, grad = sum(t["verdict"] == "verified" for t in top), sum(t["graduated"] for t in top)
+    emptied = sum(1 for t in top if t["stake"]["staked"] and t["stake"]["withdrawn"] >= 0.9 * t["stake"]["staked"])
+    spent = sum(1 for t in top if t["credit"]["minted"] and t["credit"]["activated"] >= 0.1 * t["credit"]["minted"])
+    word = lambda k: ("all ten" if len(top) == 10 else "all") if k == len(top) else "none" if not k else f"{k} of them"  # noqa: E731
+    has = lambda k: "has" if k == 1 or not k else "have"  # noqa: E731
+    top_note = (f"{'All ten' if real == len(top) == 10 else f'{real} of the {len(top)}'} are projects’ own tokens, and "
+                f"{word(grad)} {has(grad)} graduated. {word(emptied).capitalize()} {has(emptied)} taken out 90% or more of "
+                f"their stake, and {word(spent)} {has(spent)} put a tenth or more of their CREDIT to work.") if top else ""
     so_far, total = [], 0
     for d in days:  # accounts that have bought compute so far, day by day
         total += d["new_buyers"]
@@ -1902,29 +1918,36 @@ Orbio’s share has come to {num(f["orbio_cut"])} ORBIO. Who earned them:</p>
              ("bad", "Copies of a project", "the project shows another contract or disowns it", f["by"].get("scam", 0)),
              ("out", "From a copier’s wallets", "funded through wallets that launched copies", f["by"].get("linked", 0))], "ORBIO")}
 <p class="muted small">{f["agents"]:,} of {n["agents"]:,} agents have earned any fees; the top ten earned {share(f["top10"], f["orbio"])}.</p></section>
-<section class="nsec" aria-labelledby="who-h"><h2 id="who-h">2 · Compute: bought or earned</h2>{lead("bought")}
+<section class="nsec" aria-labelledby="top-h"><h2 id="top-h">2 · The agents that carry it</h2>{lead("top10")}
+<p class="sub">The ten agents that earned the most trading fees, what share of every agent’s fees each earned, and what each did
+with what its fees gave it: the CREDIT it put to work, and the stake its owner took back out.</p>
+<div class="scroll"><table class="list toptable"><thead><tr><th class="numcol">#</th><th>Agent</th><th>Official</th>
+<th class="numcol">Fees earned, ORBIO</th><th>Share of all fees</th><th class="numcol">CREDIT put to work</th>
+<th class="numcol">Stake taken out</th></tr></thead><tbody>{top_rows}</tbody></table></div>
+<p class="muted small">{top_note}</p></section>
+<section class="nsec" aria-labelledby="who-h"><h2 id="who-h">3 · Compute: bought or earned</h2>{lead("bought")}
 <p class="sub">Activating CREDIT burns it into an Orbio account’s compute balance, so it is what compute is actually bought with.
 Every activation since Orbio’s first, on {day_name(days[0])}, by who sent it:</p><ul class="nlegend">{legend}</ul>
 {day_bars(days, tuple((k, name, cls) for k, name, _, cls in who), "CREDIT activated per day", "CREDIT")}
 <h3 class="nsub">The mix, day by day</h3>
 <p class="sub">Each day’s activations as a whole: how much of the compute bought that day came through Orbio’s exchange.</p>
 {day_bars(days, tuple((k, name, cls) for k, name, _, cls in who), "CREDIT activated per day by who sent it", "CREDIT", share=True)}</section>
-<section class="nsec" aria-labelledby="buyers-h"><h2 id="buyers-h">3 · Who is buying compute</h2>{lead("buyers")}
+<section class="nsec" aria-labelledby="buyers-h"><h2 id="buyers-h">4 · Who is buying compute</h2>{lead("buyers")}
 <p class="sub">{plural(b["accounts"], "account")} have bought CREDIT on Orbio’s exchange, {num(b["median"])} CREDIT each at the median;
 {b["repeat"]} came back to buy again. Each account counts on the day of its first purchase.</p>
 {day_bars(days, (("new_buyers", "new accounts", "s-acc"),), "New accounts buying CREDIT on Orbio’s exchange per day", "")}
 <h3 class="nsub">Accounts that have bought compute, in all</h3>
 {day_bars(so_far, (("buyers", "accounts so far", "s-acc"),), "Accounts that have bought CREDIT on Orbio’s exchange, in all", "")}</section>
-<section class="where nsec" aria-labelledby="went-h"><h2 id="went-h">4 · What agents keep</h2>
+<section class="where nsec" aria-labelledby="went-h"><h2 id="went-h">5 · What agents keep</h2>
 <p class="sub">The {num(c["minted"])} CREDIT agents’ fees minted to their wallets, by what each wallet did with it. CREDIT moved
-out can still become compute in someone else’s hands: that is section 2. <a href="work.html">Every agent’s CREDIT →</a></p>
+out can still become compute in someone else’s hands: that is section 3. <a href="work.html">Every agent’s CREDIT →</a></p>
 {share_bars([(k, label, note, c[key]) for k, label, key, note in WORK_KINDS], "CREDIT")}
 <h3 class="nsub">Stake taken out</h3>
 <p class="sub">Half of an agent’s fees is staked as ORBIO, and since 1 October an owner can take it out at any time:
 {plural(s["owners_out"], "owner")} have taken {num(s["withdrawn"])} of the {num(s["staked"])} ORBIO staked.{
 f' Half of them first did so within {ex["median_h"]:g} hours of launch, and {ex["within_day"]:,} within a day.' if ex["median_h"] is not None else ""}</p>
 {day_bars(days, (("pulled", "ORBIO taken out", "s-bad"),), "ORBIO taken out of agents’ stake per day", "ORBIO")}</section>
-<section class="nsec" aria-labelledby="launch-h"><h2 id="launch-h">5 · Launches</h2>
+<section class="nsec" aria-labelledby="launch-h"><h2 id="launch-h">6 · Launches</h2>
 <p class="sub">Orbio agents launched each day, by what Dossier found: the project’s own token, a copy of a project, a launch
 from wallets a copier funded, or none of these proven. {n["graduated"]["agents"]} agents have filled their bonding curve and
 graduated, {n["graduated"]["verified"]} of them projects’ own tokens.</p>
@@ -2861,7 +2884,9 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .wpct{font:700 24px/1 var(--mono);color:var(--k);font-variant-numeric:tabular-nums;text-align:right;min-width:3.2ch}
 .wamt{font:500 14px var(--mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}.wamt small{color:var(--muted);font-size:11px}
 .wn{font-size:13px;color:var(--accent);white-space:nowrap}.wrow:disabled .wn{color:var(--muted)}
-.nsec{margin-top:48px}.nsub{margin:30px 0 0;font:700 18px var(--display)}.k-bad{--k:var(--bad);--k-bg:var(--bad-bg)}.insights{list-style:none;padding:0;margin:14px 0 0;display:grid;gap:10px}.nlead{margin:14px 0 0;padding:12px 16px;border-left:3px solid var(--accent);background:var(--sheet);border-radius:0 8px 8px 0;max-width:82ch}
+.nsec{margin-top:48px}.nsub{margin:30px 0 0;font:700 18px var(--display)}.k-acc{--k:var(--accent)}
+.tshare{display:flex;align-items:center;gap:10px;min-width:11rem;font:500 14px var(--mono);font-variant-numeric:tabular-nums}
+.tshare .wtrack{flex:1}.toptable{margin-top:16px}.k-bad{--k:var(--bad);--k-bg:var(--bad-bg)}.insights{list-style:none;padding:0;margin:14px 0 0;display:grid;gap:10px}.nlead{margin:14px 0 0;padding:12px 16px;border-left:3px solid var(--accent);background:var(--sheet);border-radius:0 8px 8px 0;max-width:82ch}
 .insights li{padding:12px 16px;border-left:3px solid var(--accent);background:var(--sheet);border-radius:0 8px 8px 0;max-width:82ch}.s-acc{--s:var(--accent)}.s-warn{--s:var(--warn)}.s-ok{--s:var(--ok)}.s-bad{--s:var(--bad)}.s-mut{--s:color-mix(in srgb,var(--muted) 55%,transparent)}
 .dchart{margin:18px 0 0}.dtop,.daxis{margin:0;font:500 12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
 .dbars{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:3px;height:170px;margin:6px 0;
