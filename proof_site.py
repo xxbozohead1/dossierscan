@@ -3663,9 +3663,10 @@ JS = r"""
     if(light)HTML.setAttribute('data-theme','light');else HTML.removeAttribute('data-theme');
     try{localStorage.setItem('dossier.theme',light?'light':'dark')}catch(e){}themeSync()});
   themeSync();
-  // the nav's menus (<details>): one open at a time, closed by a click elsewhere or Escape
+  // the nav's menus (<details>): one open at a time, closed by a click elsewhere, a choice in it (a jump within the
+  // page doesn't reload it) or Escape
   document.addEventListener('click',function(ev){document.querySelectorAll('.menu[open]').forEach(function(m){
-    if(!m.contains(ev.target))m.open=false})});
+    if(!m.contains(ev.target)||ev.target.closest('.panel a'))m.open=false})});
   document.addEventListener('keydown',function(ev){if(ev.key==='Escape')document.querySelectorAll('.menu[open]').forEach(function(m){
     m.open=false;m.querySelector('summary').focus()})});
   var LABEL={verified:'Verified',scam:'Impersonator',linked:'Impersonator’s wallet',checking:'Checking',unverified:'Unverified',
