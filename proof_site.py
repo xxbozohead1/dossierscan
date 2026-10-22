@@ -1991,7 +1991,9 @@ project, a launch from wallets a copier funded, or none of these proven.</p>
     toc = "".join(f'<li><a href="#n-{k}">{said[k][0]}</a></li>' for k, _, _ in sections if k in said)
     body = "".join(f'<section class="nsec{" where" if k in ("fees", "keep", "grad") else ""}" id="n-{k}" aria-labelledby="n-{k}-h">'
                    f'<h2 id="n-{k}-h">{i} · {title}</h2>{html}</section>' for i, (k, title, html) in enumerate(sections, 1))
-    return f"""<section class="page-head"><p class="kicker">Orbio in numbers</p><h1>What Orbio’s agent economy is doing</h1>
+    # the front page was the launch feed until 22 Oct: old links to it (every channel post's "Open the feed") end in #live
+    return f"""<script>if(/^#(live|board)$/.test(location.hash))location.replace("launches.html"+location.hash)</script>
+<section class="page-head"><p class="kicker">Orbio in numbers</p><h1>What Orbio’s agent economy is doing</h1>
 <p class="sub">Read from the chain and Orbio’s public API, not from what anyone says: who earns the fees, who buys compute,
 what agents keep and how launches go. Every Orbio agent counts, copies included. Updated every few minutes.</p>
 <dl class="tally"><div><dt>Orbio agents</dt><dd>{n["agents"]:,}</dd></div>
