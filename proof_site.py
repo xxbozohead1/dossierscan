@@ -1825,7 +1825,7 @@ goes, and who turns CREDIT into compute. Every Orbio agent counts, copies includ
 <div><dt>AI balance agents earned</dt><dd>{usd(n["ai_earned"])}</dd></div>
 <div><dt>launches that copied a project</dt><dd class="bad">{share(n["copies"], n["agents"])}</dd></div>
 <div><dt>launched from a copier’s wallets</dt><dd class="warn">{share(n["linked"], n["agents"])}</dd></div>
-<div><dt>first-10-second buyers out in 30 min</dt><dd class="bad">{share(sell["sold"], sell["buyers"])}</dd></div></dl></section>
+<div><dt>first-10-second buys sold off in 30 min</dt><dd class="bad">{share(sell["sold"], sell["buyers"])}</dd></div></dl></section>
 <section class="nsec" aria-labelledby="who-h"><h2 id="who-h">Who turns CREDIT into compute</h2>
 <p class="sub">Activating CREDIT burns it into an Orbio account’s compute balance, so it is what compute is actually bought with.
 Every activation since 1 October, by who sent it.</p><ul class="nlegend">{legend}</ul>
@@ -1844,8 +1844,8 @@ launch from wallets a copier funded, or none of these proven.</p>
 {day_bars(launches, (("verified", "the project’s own", "s-ok"), ("copies", "copies", "s-bad"),
                      ("linked", "from a copier’s wallets", "s-warn"), ("rest", "none proven", "s-mut")),
            "Orbio agents launched per day", "")}
-<p class="muted small">Of the {sell["buyers"]:,} wallets that bought an agent in its first 10 seconds, {sell["sold"]:,} had sold
-within 30 minutes.</p></section>
+<p class="muted small">Buyers in an agent’s first 10 seconds, too fast for a person, are nearly all bots. Of {sell["buyers"]:,} such
+buys (a wallet counts once per launch), {sell["sold"]:,} had sold 90% or more of it within 30 minutes.</p></section>
 <section class="method"><h2>How it’s measured</h2><ul>
 <li>CREDIT activations are CREDIT’s own <code>Activated</code> logs since 1 October. Orbio’s exchange is the address Orbio
 publishes (<code>/api/protocol/status</code>).</li>
