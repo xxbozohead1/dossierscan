@@ -2691,9 +2691,12 @@ def method_page() -> str:
 def api_page(feed: dict) -> str:
     sample = feed["tokens"][0]["token"] if feed["tokens"] else "0x…"
     return f"""<article class="prose"><h1>API</h1><p>Everything on {NAME} is also plain JSON, and free. It's rebuilt from the index
-every few minutes, and every score line carries its source and time.</p>
+every few minutes, and every score line carries its source and time. Start with
+<a href="api/v1/numbers.json"><code>numbers.json</code></a>: Orbio's agent economy as a whole, the figures on the
+<a href="index.html">front page</a>. The token endpoints give each agent's own file.</p>
 <h2>Keys and limits</h2><p>Without a key, each network gets a daily allowance (UTC days): 24 calls to <code>feed.json</code>, 200
-token records and 200 calls to <code>summary.json</code>; and each tool, by its user agent, gets 48 calls to
+token records, 200 calls to <code>summary.json</code>, 50 to <code>apps.json</code>, and 100 in all to the rest,
+<code>numbers.json</code> and the operator files included; and each tool, by its user agent, gets 48 calls to
 <code>feed.json</code> a day across every network. A key lifts both, and it's free: send
 <a href="https://t.me/dossierscanbot?start=apikey" rel="noopener" target="_blank"><code>/apikey your project · how to reach you</code></a>
 to {NAME}'s bot. Send the key in an <code>X-Dossier-Key</code> header (or <code>?key=</code>). With a key we know who builds on
@@ -2708,6 +2711,10 @@ checks a day, and an address that isn't a launch doesn't count. An unverified to
 after its channels were last read: a request after that checks it again. Orbio agents never need this: each one has a file from its
 first seconds, so ask for it as you would any other.</p>
 <h2>Endpoints</h2><div class="scroll"><table class="list md"><thead><tr><th>Path</th><th>What</th></tr></thead><tbody>
+<tr><td><a href="api/v1/numbers.json"><code>api/v1/numbers.json</code></a></td><td>Orbio's agent economy as a whole: who
+earns the fees, the ten agents that earn most, CREDIT turned into compute and who bought it, what agents keep of their CREDIT
+and stake, graduations and launch sell-offs; every day since Orbio's first (<code>days</code>), and one snapshot of the totals a
+day from 22 October (<code>history</code>). Field by field <a href="#numbers">below</a>.</td></tr>
 <tr><td><a href="api/v1/feed.json"><code>api/v1/feed.json</code></a></td><td>Every token on file: verdict with receipts, status,
 scores, market and treasury, related tokens, identities and the evidence behind each score line.</td></tr>
 <tr><td><a href="api/v1/tokens/{sample}.json"><code>api/v1/tokens/&lt;address&gt;.json</code></a></td><td>One token, the same shape.
@@ -2721,15 +2728,48 @@ Short keys, to keep it small.</td></tr>
 agents point to: what Orbio's consent page says about it (name, the host it sends people back to, fee and its changes), the
 scopes it asks for, where it was seen, and <code>status</code>: <code>official</code>, <code>unverified</code> or
 <code>impersonator</code>.</td></tr>
-<tr><td><a href="api/v1/numbers.json"><code>api/v1/numbers.json</code></a></td><td>Orbio's agent economy as a whole: CREDIT
-activated into compute by who sent it, agents' CREDIT put to work, held and moved out, the AI balance they earned, stake taken
-out, copies and launch sell-offs; every day since Orbio’s first (<code>days</code>), and one snapshot of the totals a day from
-22 October (<code>history</code>).</td></tr>
 <tr><td><a href="api/v1/operators.json"><code>api/v1/operators.json</code></a></td><td>The operators with a page: id, label,
 whether it is a copier ring, its counts by verdict, its wallets and its first and last launch.</td></tr>
 <tr><td><code>api/v1/operators/&lt;id&gt;.json</code></td><td>One operator, as its page shows it: its wallets with their
 first funding, its tokens with their state, the accounts and sites they name, and the stake and CREDIT its agents moved.</td></tr></tbody></table></div>
-<h2>Fields worth knowing</h2><ul>
+<h2 id="numbers"><code>numbers.json</code>, field by field</h2><p>Every Orbio agent counts, launched or listed, copies
+included. ORBIO and CREDIT are whole tokens, not base units; times are Unix seconds and days are UTC.</p><ul>
+<li><code>agents</code> is how many Orbio agents are on file. <code>kinds</code> splits them: <code>verified</code> (the project's
+own token), <code>scam</code> (a copy: the project shows another contract or disowns it), <code>linked</code> (red only because
+wallets that launched copies funded it, which isn't the same as copying) and <code>unverified</code>. <code>verified</code>,
+<code>copies</code> and <code>linked</code> repeat three of them.</li>
+<li><code>fees</code>: the trading fees agents have earned, in ORBIO. <code>orbio</code> is the total, <code>by</code> splits it
+by kind, <code>top10</code> is what the ten biggest earned, <code>agents</code> how many earned any, <code>orbio_cut</code>
+Orbio's share, and <code>orbio_usd</code> ORBIO's price when the file was built, for a rough dollar value (fees were paid at
+other prices).</li>
+<li><code>top</code>: the ten agents that earned the most fees, each with <code>token</code>, <code>symbol</code>,
+<code>name</code>, <code>orbio_agent</code>, <code>verdict</code>, <code>fees</code>, <code>graduated</code>,
+<code>credit.minted</code> and <code>credit.activated</code>, and <code>stake.staked</code> and <code>stake.withdrawn</code>.</li>
+<li><code>credit</code>: the CREDIT agents' fees minted to their wallets: <code>minted</code>, <code>activated</code> (by the
+agent's own wallet), <code>held</code> and <code>moved_out</code> (sold, sent, or used from another wallet).</li>
+<li><code>activations</code>: every CREDIT activation since the first on 15 September, by who sent it. Activating burns CREDIT
+into an Orbio account's compute balance. <code>exchange</code> is Orbio's exchange (bought and activated for the buyer),
+<code>own</code> a wallet activating its own CREDIT, <code>other</code> anyone activating for someone else; each has
+<code>credit</code> and <code>accounts</code> (the accounts it went to).</li>
+<li><code>buyers</code>: the accounts that bought CREDIT on Orbio's exchange: <code>accounts</code>, <code>repeat</code> (bought
+more than once) and <code>median</code> (CREDIT each).</li>
+<li><code>ai_earned</code>: the USDG agents' fees put into their AI balances, which can only be spent on compute.</li>
+<li><code>stake</code>: the ORBIO agents have <code>staked</code> and <code>withdrawn</code>, and <code>owners_out</code>, how many
+owners took any out. <code>exits</code> times each owner's first withdrawal from launch: <code>owners</code>,
+<code>median_h</code> (hours), <code>within_day</code>, and <code>buckets</code>, pairs of [up to this many seconds after launch,
+or <code>null</code> for later; owners].</li>
+<li><code>graduated</code>: the agents that filled their bonding curve, in all (<code>agents</code>), the projects' own
+(<code>verified</code>) and by kind (<code>by</code>).</li>
+<li><code>selloff</code>: buys in an agent's first 10 seconds (<code>buyers</code>; a wallet counts once per launch) and how many
+had sold 90% or more of it within 30 minutes (<code>sold</code>).</li>
+<li><code>days[]</code>: one entry a UTC day since Orbio's first, with <code>day</code>; agents launched that day
+(<code>launches</code>, and <code>verified</code>, <code>copies</code> and <code>linked</code> among them) and their first-10-second
+buys (<code>early</code>, <code>early_sold</code>); CREDIT activated that day by sender (<code>exchange</code>, <code>own</code>,
+<code>other</code>); accounts buying CREDIT for the first time (<code>new_buyers</code>); and ORBIO taken out of stake
+(<code>pulled</code>).</li>
+<li><code>history[]</code>: one snapshot of the totals a UTC day from 22 October, with the same fields as the top level apart from
+<code>days</code> and <code>history</code>; <code>at</code> is when each was taken.</li></ul>
+<h2>Token fields worth knowing</h2><ul>
 <li><code>verdict.verdict</code> is <code>verified</code>, <code>scam</code> or <code>unverified</code>, and
 <code>verdict.receipts</code> links the post or page it rests on.</li>
 <li><code>related.claimed</code> lists the tokens the same X account or site claims: for an impersonator, that's the real token.
