@@ -1775,19 +1775,28 @@ balance only its own account can see, so it shows here only where that account h
 
 # ----------------------------------------------------------------- Orbio in numbers
 
-def day_bars(days: list[dict], parts: tuple, label: str, unit: str) -> str:
+def day_name(d: dict) -> str:
+    """A series day ({"day": "2026-09-15"}) as "15 Sep"."""
+    return dt.datetime.strptime(d["day"], "%Y-%m-%d").strftime("%d %b").lstrip("0")
+
+
+def day_bars(days: list[dict], parts: tuple, label: str, unit: str, share: bool = False) -> str:
     """Days side by side, each a stack of `parts` ((key, name, class), bottom first) on one scale: the busiest day's total,
-    which is labelled. Each day's figures are in its tooltip, and the chart's label sums them up for screen readers."""
+    which is labelled. With `share`, each day is its own whole, so the bars show the day's mix rather than its amounts. Each
+    day's figures are in its tooltip, and the chart's label sums them up for screen readers.
+    shortcut: a column a day since Orbio began; past ~90 days (mid-December) they get thin on a phone: fold into weeks then."""
     tot = [sum(d[k] for k, _, _ in parts) for d in days]
     top = max(tot) or 1
-    day = lambda d: dt.datetime.strptime(d["day"], "%Y-%m-%d").strftime("%d %b").lstrip("0")  # noqa: E731
+    day = day_name
     cols = "".join(f'<span class="dc" title="{day(d)}: ' + " · ".join(f"{num(d[k])} {e(name)}" for k, name, _ in parts) + '">'
-                   + "".join(f'<i class="{cls}" style="height:{100 * d[k] / top:.2f}%"></i>' for k, _, cls in parts if d[k])
-                   + "</span>" for d in days)
+                   + "".join(f'<i class="{cls}" style="height:{100 * d[k] / ((t or 1) if share else top):.2f}%"></i>'
+                             for k, _, cls in parts if d[k])
+                   + "</span>" for d, t in zip(days, tot))
     legend = "".join(f'<span><i class="{cls}"></i>{e(name)}</span>' for _, name, cls in parts)
-    return (f'<figure class="dchart"><p class="dtop">{num(top, unit)}</p>'
-            f'<div class="dbars" role="img" aria-label="{e(label)}: {num(sum(tot), unit)} over {len(days)} days, '
-            f'{num(top, unit)} on the busiest">{cols}</div>'
+    said = (f"{e(label)}, as a share of each day, over {len(days)} days" if share else
+            f"{e(label)}: {num(sum(tot), unit)} over {len(days)} days, {num(top, unit)} on the busiest")
+    return (f'<figure class="dchart"><p class="dtop">{"100%" if share else num(top, unit)}</p>'
+            f'<div class="dbars" role="img" aria-label="{said}">{cols}</div>'
             f'<p class="daxis"><span>{day(days[0])}</span><span>{day(days[-1])}</span></p>'
             f'<figcaption class="dlegend">{legend}</figcaption></figure>')
 
@@ -1802,7 +1811,7 @@ def share_bars(rows: list[tuple], unit: str) -> str:
 <span class="wn"></span></div>""" for k, label, note, x in rows) + "</div>"
 
 
-def numbers_insights(n: dict) -> list[str]:
+def numbers_insights(n: dict) -> dict[str, str]:
     """What the numbers say, written from them each build. A line shows only while its figures still say it, so none goes
     stale as the economy changes."""
     f, c, s, g, days = n["fees"], n["credit"], n["stake"], n["graduated"], n["days"]
@@ -1812,31 +1821,31 @@ def numbers_insights(n: dict) -> list[str]:
     real = pct(f["by"].get("verified", 0), f["orbio"])
     new7, before = sum(d["new_buyers"] for d in days[-7:]), sum(d["new_buyers"] for d in days[-14:-7])
     work = pct(c["activated"], c["activated"] + c["held"] + c["moved_out"])
-    out = []
+    out = {}
     if real > 50:
-        out.append(f"<b>Real projects earn the fees.</b> The {n['verified']} agents their own project claims are only "
+        out["fees"] = (f"<b>Real projects earn the fees.</b> The {n['verified']} agents their own project claims are only "
                    f"{pct(n['verified'], n['agents']):.1f}% of all agents, yet {real:.0f}% of all the trading fees agents have "
                    f"earned came from trading them. Copies of real projects drew {pct(f['by'].get('scam', 0), f['orbio']):.0f}%: "
                    f"traders’ money mostly goes to the real thing.")
     if new7 > before and new7 >= 7:
-        out.append(f"<b>More people are buying compute.</b> {new7} new accounts bought CREDIT on Orbio’s exchange in the last 7 days, "
+        out["buyers"] = (f"<b>More people are buying compute.</b> {new7} new accounts bought CREDIT on Orbio’s exchange in the last 7 days, "
                    f"against {before} the week before.")
     if bought > 50:
-        out.append(f"<b>Most compute is bought, not earned.</b> {bought:.0f}% of all CREDIT turned into compute came through "
+        out["bought"] = (f"<b>Most compute is bought, not earned.</b> {bought:.0f}% of all CREDIT turned into compute came through "
                    f"Orbio’s exchange, from {n['buyers']['accounts']} accounts: demand from outside the agents’ own fees.")
     if g["agents"] and 2 * g["verified"] > g["agents"]:
-        out.append(f"<b>The agents that graduate are real.</b> {g['verified']} of the {g['agents']} agents that filled their "
+        out["graduate"] = (f"<b>The agents that graduate are real.</b> {g['verified']} of the {g['agents']} agents that filled their "
                    f"bonding curve are projects that claim their token.")
     if work < 10 and pct(s["withdrawn"], s["staked"]) > 50:
-        out.append(f"<b>Agents cash out rather than spend.</b> They’ve put {work:.1f}% of their own CREDIT to work and taken "
+        out["cashout"] = (f"<b>Agents cash out rather than spend.</b> They’ve put {work:.1f}% of their own CREDIT to work and taken "
                    f"{pct(s['withdrawn'], s['staked']):.0f}% of their staked ORBIO back out"
                    + (f"; half the owners who exit do so within {n['exits']['median_h']:g} hours of launch."
                       if n["exits"]["median_h"] is not None else "."))
     if pct(f["top10"], f["orbio"]) > 40:
-        out.append(f"<b>A few agents carry the economy.</b> Ten agents earned {pct(f['top10'], f['orbio']):.0f}% of all fees, "
+        out["top10"] = (f"<b>A few agents carry the economy.</b> Ten agents earned {pct(f['top10'], f['orbio']):.0f}% of all fees, "
                    f"and {f['agents']:,} of {n['agents']:,} have earned any.")
     if pct(n["selloff"]["sold"], n["selloff"]["buyers"]) > 50:
-        out.append(f"<b>Launch bots flip.</b> {pct(n['selloff']['sold'], n['selloff']['buyers']):.0f}% of buys in an agent’s "
+        out["bots"] = (f"<b>Launch bots flip.</b> {pct(n['selloff']['sold'], n['selloff']['buyers']):.0f}% of buys in an agent’s "
                    f"first 10 seconds were sold within 30 minutes: the first buyers are rarely the holders.")
     return out
 
@@ -1864,7 +1873,13 @@ def numbers_page(feed: dict) -> str:
     legend = "".join(f'<li><i class="{cls}"></i><b>{num(act[k]["credit"])} CREDIT</b> {note}: '
                      f'{plural(act[k]["accounts"], "account")}</li>' for k, _, note, cls in who)
     launches = [{**d, "rest": d["launches"] - d["verified"] - d["copies"] - d["linked"]} for d in days]
-    insights = "".join(f"<li>{x}</li>" for x in numbers_insights(n))
+    said = numbers_insights(n)
+    lead = lambda k: f'<p class="nlead">{said[k]}</p>' if k in said else ""  # noqa: E731 -- the two compute sections open with theirs
+    insights = "".join(f"<li>{x}</li>" for k, x in said.items() if k not in ("bought", "buyers"))
+    so_far, total = [], 0
+    for d in days:  # accounts that have bought compute so far, day by day
+        total += d["new_buyers"]
+        so_far.append({"day": d["day"], "buyers": total})
     ex = n["exits"]
     return f"""<section class="page-head"><p class="kicker">Orbio in numbers</p><h1>What Orbio’s agent economy is doing</h1>
 <p class="sub">Read from the chain and Orbio’s public API, not from what anyone says, in the order Orbio’s flywheel turns: trades
@@ -1887,24 +1902,29 @@ Orbio’s share has come to {num(f["orbio_cut"])} ORBIO. Who earned them:</p>
              ("bad", "Copies of a project", "the project shows another contract or disowns it", f["by"].get("scam", 0)),
              ("out", "From a copier’s wallets", "funded through wallets that launched copies", f["by"].get("linked", 0))], "ORBIO")}
 <p class="muted small">{f["agents"]:,} of {n["agents"]:,} agents have earned any fees; the top ten earned {share(f["top10"], f["orbio"])}.</p></section>
-<section class="nsec" aria-labelledby="who-h"><h2 id="who-h">2 · Compute: who buys it</h2>
+<section class="nsec" aria-labelledby="who-h"><h2 id="who-h">2 · Compute: bought or earned</h2>{lead("bought")}
 <p class="sub">Activating CREDIT burns it into an Orbio account’s compute balance, so it is what compute is actually bought with.
-Every activation since 1 October, by who sent it.</p><ul class="nlegend">{legend}</ul>
+Every activation since Orbio’s first, on {day_name(days[0])}, by who sent it:</p><ul class="nlegend">{legend}</ul>
 {day_bars(days, tuple((k, name, cls) for k, name, _, cls in who), "CREDIT activated per day", "CREDIT")}
-<h3 class="nsub">New accounts buying compute</h3>
+<h3 class="nsub">The mix, day by day</h3>
+<p class="sub">Each day’s activations as a whole: how much of the compute bought that day came through Orbio’s exchange.</p>
+{day_bars(days, tuple((k, name, cls) for k, name, _, cls in who), "CREDIT activated per day by who sent it", "CREDIT", share=True)}</section>
+<section class="nsec" aria-labelledby="buyers-h"><h2 id="buyers-h">3 · Who is buying compute</h2>{lead("buyers")}
 <p class="sub">{plural(b["accounts"], "account")} have bought CREDIT on Orbio’s exchange, {num(b["median"])} CREDIT each at the median;
 {b["repeat"]} came back to buy again. Each account counts on the day of its first purchase.</p>
-{day_bars(days, (("new_buyers", "new accounts", "s-acc"),), "New accounts buying CREDIT on Orbio’s exchange per day", "")}</section>
-<section class="where nsec" aria-labelledby="went-h"><h2 id="went-h">3 · What agents keep</h2>
+{day_bars(days, (("new_buyers", "new accounts", "s-acc"),), "New accounts buying CREDIT on Orbio’s exchange per day", "")}
+<h3 class="nsub">Accounts that have bought compute, in all</h3>
+{day_bars(so_far, (("buyers", "accounts so far", "s-acc"),), "Accounts that have bought CREDIT on Orbio’s exchange, in all", "")}</section>
+<section class="where nsec" aria-labelledby="went-h"><h2 id="went-h">4 · What agents keep</h2>
 <p class="sub">The {num(c["minted"])} CREDIT agents’ fees minted to their wallets, by what each wallet did with it. CREDIT moved
-out can still become compute in someone else’s hands: that is the chart above. <a href="work.html">Every agent’s CREDIT →</a></p>
+out can still become compute in someone else’s hands: that is section 2. <a href="work.html">Every agent’s CREDIT →</a></p>
 {share_bars([(k, label, note, c[key]) for k, label, key, note in WORK_KINDS], "CREDIT")}
 <h3 class="nsub">Stake taken out</h3>
 <p class="sub">Half of an agent’s fees is staked as ORBIO, and since 1 October an owner can take it out at any time:
 {plural(s["owners_out"], "owner")} have taken {num(s["withdrawn"])} of the {num(s["staked"])} ORBIO staked.{
 f' Half of them first did so within {ex["median_h"]:g} hours of launch, and {ex["within_day"]:,} within a day.' if ex["median_h"] is not None else ""}</p>
 {day_bars(days, (("pulled", "ORBIO taken out", "s-bad"),), "ORBIO taken out of agents’ stake per day", "ORBIO")}</section>
-<section class="nsec" aria-labelledby="launch-h"><h2 id="launch-h">4 · Launches</h2>
+<section class="nsec" aria-labelledby="launch-h"><h2 id="launch-h">5 · Launches</h2>
 <p class="sub">Orbio agents launched each day, by what Dossier found: the project’s own token, a copy of a project, a launch
 from wallets a copier funded, or none of these proven. {n["graduated"]["agents"]} agents have filled their bonding curve and
 graduated, {n["graduated"]["verified"]} of them projects’ own tokens.</p>
@@ -1916,8 +1936,8 @@ buys (a wallet counts once per launch), {sell["sold"]:,} had sold 90% or more of
 <section class="method"><h2>How it’s measured</h2><ul>
 <li>Trading fees, CREDIT minted, held and moved out, the AI balance and the stake come from Orbio’s agents API and the chain,
 per agent. Fees are counted in ORBIO; their dollar value uses today’s price, not the price when each was paid.</li>
-<li>CREDIT activations are CREDIT’s own <code>Activated</code> logs since 1 October. Orbio’s exchange is the address Orbio
-publishes (<code>/api/protocol/status</code>).</li>
+<li>CREDIT activations are CREDIT’s own <code>Activated</code> logs, every one since the first on 15 September. Orbio’s
+exchange is the address Orbio publishes (<code>/api/protocol/status</code>).</li>
 <li>What an account spends from its compute balance isn’t on the chain, so it isn’t here.</li>
 <li>The insights are written from these figures each time the page is built, and each shows only while its figures hold.</li>
 <li>The same figures are in <a href="api/v1/numbers.json"><code>api/v1/numbers.json</code></a>, with one snapshot of the totals
@@ -2630,7 +2650,7 @@ scopes it asks for, where it was seen, and <code>status</code>: <code>official</
 <code>impersonator</code>.</td></tr>
 <tr><td><a href="api/v1/numbers.json"><code>api/v1/numbers.json</code></a></td><td>Orbio's agent economy as a whole: CREDIT
 activated into compute by who sent it, agents' CREDIT put to work, held and moved out, the AI balance they earned, stake taken
-out, copies and launch sell-offs; the last 30 days day by day (<code>days</code>), and one snapshot of the totals a day from
+out, copies and launch sell-offs; every day since Orbio’s first (<code>days</code>), and one snapshot of the totals a day from
 22 October (<code>history</code>).</td></tr>
 <tr><td><a href="api/v1/operators.json"><code>api/v1/operators.json</code></a></td><td>The operators with a page: id, label,
 whether it is a copier ring, its counts by verdict, its wallets and its first and last launch.</td></tr>
@@ -2841,7 +2861,8 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .wpct{font:700 24px/1 var(--mono);color:var(--k);font-variant-numeric:tabular-nums;text-align:right;min-width:3.2ch}
 .wamt{font:500 14px var(--mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}.wamt small{color:var(--muted);font-size:11px}
 .wn{font-size:13px;color:var(--accent);white-space:nowrap}.wrow:disabled .wn{color:var(--muted)}
-.nsec{margin-top:48px}.nsub{margin:30px 0 0;font:700 18px var(--display)}.k-bad{--k:var(--bad);--k-bg:var(--bad-bg)}.insights{list-style:none;padding:0;margin:14px 0 0;display:grid;gap:10px}.insights li{padding:12px 16px;border-left:3px solid var(--accent);background:var(--sheet);border-radius:0 8px 8px 0;max-width:82ch}.s-acc{--s:var(--accent)}.s-warn{--s:var(--warn)}.s-ok{--s:var(--ok)}.s-bad{--s:var(--bad)}.s-mut{--s:color-mix(in srgb,var(--muted) 55%,transparent)}
+.nsec{margin-top:48px}.nsub{margin:30px 0 0;font:700 18px var(--display)}.k-bad{--k:var(--bad);--k-bg:var(--bad-bg)}.insights{list-style:none;padding:0;margin:14px 0 0;display:grid;gap:10px}.nlead{margin:14px 0 0;padding:12px 16px;border-left:3px solid var(--accent);background:var(--sheet);border-radius:0 8px 8px 0;max-width:82ch}
+.insights li{padding:12px 16px;border-left:3px solid var(--accent);background:var(--sheet);border-radius:0 8px 8px 0;max-width:82ch}.s-acc{--s:var(--accent)}.s-warn{--s:var(--warn)}.s-ok{--s:var(--ok)}.s-bad{--s:var(--bad)}.s-mut{--s:color-mix(in srgb,var(--muted) 55%,transparent)}
 .dchart{margin:18px 0 0}.dtop,.daxis{margin:0;font:500 12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
 .dbars{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:3px;height:170px;margin:6px 0;
   border-bottom:1px solid var(--rule-2);background:linear-gradient(var(--rule) 1px,transparent 1px) 0 0/100% 50%}
