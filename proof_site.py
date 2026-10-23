@@ -4267,6 +4267,8 @@ def page_key(t: dict, feed: dict, site: str) -> str:
     op = OPS.get(t.get("operator") or "")
     blob = json.dumps({**{k: v for k, v in t.items() if k not in ("market", "activity", "treasury")},
                        "_state": state_of(t, feed["generated_at"]), "_treasury": [bool(t.get("treasury")), tr.get("fees_orbio")],
+                       # its compute chart runs to the build's day, so a quiet agent's page is rebuilt once a day
+                       "_day": t.get("compute") and time.strftime("%Y-%m-%d", time.gmtime(feed["generated_at"])),
                        "_op": op and [op["label"], op["copier_ring"], op["counts"]["tokens"], op["counts"]["impersonators"]]},
                       sort_keys=True, default=str)
     linked = sorted(a for a in set(PAGE_ADDR.findall(blob)) if a in ON_FILE)
