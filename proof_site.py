@@ -1335,9 +1335,62 @@ def token_page(t: dict, feed: dict) -> str:
 {trader_block(t, now)}
 {apps_block(t, feed)}
 {treasury_block(t) if tr and not listed else ""}
+{compute_block(t, now)}
 {identities(t)}
 {evidence(t) if t.get("facts") else ""}
 <p class="muted small">Raw data for this file: <a href="../api/v1/tokens/{addr}.json">{addr[:10]}….json</a></p></div>"""
+
+
+CREDIT_FROM_DAY = "2026-10-01"  # agents' fees have minted CREDIT to their wallets since the 1 Oct upgrade
+
+
+def day_range(first: str, last: str) -> list[str]:
+    """Every UTC day from `first` to `last`, as "2026-10-01" strings."""
+    a, b = dt.date.fromisoformat(first), dt.date.fromisoformat(last)
+    return [(a + dt.timedelta(days=i)).isoformat() for i in range((b - a).days + 1)]
+
+
+def mini_bars(values: list[float]) -> str:
+    """A small bar for each value, scaled to the largest: a table row's last 30 days at a glance."""
+    top = max(values, default=0) or 1
+    return ('<span class="mbars" aria-hidden="true">'
+            + "".join(f'<i style="height:{100 * v / top:.0f}%"></i>' for v in values) + "</span>")
+
+
+def compute_block(t: dict, now: int) -> str:
+    """"Compute use" on an Orbio agent's file (user, 23 Oct, after @jelko___ asked for credit usage per agent per day): the
+    CREDIT its wallet put to work each day, its totals, and what its fees minted each day once Dossier has two daily
+    snapshots to tell it by (proof_index.agent_compute)."""
+    cp, minted = t.get("compute") or {}, ((t.get("owner") or {}).get("credit") or {}).get("minted") or 0
+    if not t.get("orbio_agent") or not cp:
+        return ""
+    used = dict(cp.get("days") or [])
+    total = sum(used.values())
+    today = time.strftime("%Y-%m-%d", time.gmtime(now))
+    first = min([max(CREDIT_FROM_DAY, time.strftime("%Y-%m-%d", time.gmtime(t.get("launched_at") or now)))] + list(used))
+    days = [{"day": d, "used": used.get(d, 0)} for d in day_range(first, today)]
+    sym = e(t["symbol"] or "?")
+    chart = (day_bars(days, (("used", "CREDIT put to work", "s-ok"),), f"CREDIT ${sym} put to work per day", "CREDIT") if total else
+             f'<p class="nlead">${sym} hasn’t put any of its CREDIT to work yet'
+             + (f": its fees have minted {num(minted)} CREDIT to its wallet." if minted else ".") + "</p>")
+    earned = cp.get("earned") or []
+    made = ""
+    if len(earned) >= 2:  # one day's figure alone says nothing about a trend
+        got = dict((d, m) for d, m, _ in earned)
+        made = ('<h3 class="nsub">CREDIT its fees minted, per day</h3>'
+                + day_bars([{"day": d, "minted": got.get(d, 0)} for d in day_range(earned[0][0], today)],
+                           (("minted", "CREDIT minted", "s-acc"),), f"CREDIT ${sym}’s fees minted per day", "CREDIT"))
+    return f"""<section class="safety compute" id="compute"><h2>Compute use</h2>
+<p class="sub">An agent’s trading fees mint CREDIT to its wallet. Activating CREDIT turns it into compute, so this is ${sym}
+putting its budget to work, day by day.</p>
+<dl class="tally"><div><dt>CREDIT its fees minted</dt><dd>{num(minted)}</dd></div>
+<div><dt>put to work</dt><dd class="{"ok" if minted and total >= .1 * minted else "warn"}">{num(total)}{f" <small>{total / minted:.0%}</small>" if minted and total else ""}</dd></div>
+<div><dt>in the last 7 days</dt><dd>{num(cp.get("week") or 0)}</dd></div>
+<div><dt>days it put CREDIT to work</dt><dd>{cp.get("active_days") or 0}</dd></div></dl>
+{chart}{made}
+<p class="muted small">From the chain: CREDIT’s activations by its agent wallet, every wallet it has had included; a wallet
+shared with other agents is split by what each one’s fees minted. What it spends after activating only its own account can see.
+<a href="../work.html#active">Which agents put CREDIT to work →</a></p></section>"""
 
 
 def fmt_span(secs: int | None) -> str:
@@ -1714,6 +1767,32 @@ agents that did mostly that; pick it again to list them all.</p>
 <div class="wbars">{"".join(rows)}</div>{rest}</section>"""
 
 
+def active_section(feed: dict) -> str:
+    """"Active this week" on the At work page (user, 23 Oct): the agents that put CREDIT to work in the last 7 days, most
+    first, each with its last 30 days; and how many agents did, day by day (proof_index.agent_compute)."""
+    n, now = feed.get("numbers") or {}, feed["generated_at"]
+    by = {t["token"]: t for t in feed["tokens"]}
+    today = time.strftime("%Y-%m-%d", time.gmtime(now))
+    month = day_range((dt.date.fromisoformat(today) - dt.timedelta(days=29)).isoformat(), today)
+    rows = []
+    for i, a in enumerate(n.get("active_week") or [], 1):
+        t = by.get(a["token"]) or a
+        used = dict((t.get("compute") or {}).get("days") or [])
+        rows.append(f'<tr><td class="numcol">{i}</td><td>{tref(t)}</td><td>{chip(state_of(t, now)) if a["token"] in by else ""}</td>'
+                    f'<td class="numcol">{num(a["credit"])}</td><td class="numcol">{sum(1 for d in month[-7:] if used.get(d))} of 7</td>'
+                    f'<td>{mini_bars([used.get(d, 0) for d in month])}</td><td class="numcol">{num(sum(used.values()))}</td></tr>')
+    days = [d for d in n.get("days") or [] if d["day"] >= CREDIT_FROM_DAY and "agents_working" in d]
+    week = sum(a["credit"] for a in n.get("active_week") or [])
+    table = (f"""<div class="scroll"><table class="list toptable"><thead><tr><th class="numcol">#</th><th>Agent</th><th>Official</th>
+<th class="numcol">Put to work, 7 days</th><th class="numcol">Days active</th><th>Last 30 days</th><th class="numcol">Put to work, all</th>
+</tr></thead><tbody>{"".join(rows)}</tbody></table></div>""" if rows else '<p class="nlead">No agent put CREDIT to work in the last 7 days.</p>')
+    return f"""<section class="nsec" id="active" aria-labelledby="active-h"><h2 id="active-h">Active this week</h2>
+<p class="sub">The agents whose wallets turned CREDIT into compute in the last 7 days: {plural(len(rows), "agent")}, {num(week)} CREDIT
+in all. Each one’s file shows its compute use day by day.</p>{table}
+{'<h3 class="nsub">Agents putting CREDIT to work, per day</h3>' + day_bars(days, (("agents_working", "agents", "s-ok"),),
+ "Agents putting CREDIT to work per day", "") if days else ""}</section>"""
+
+
 def work_page(feed: dict) -> str:
     """An agent's compute budget, both halves (user, 5 Oct: "build it"): the CREDIT its fees mint to its wallet, and what
     the wallet did with it; and the USDG its fees put into its AI balance, with what it spent where its own account
@@ -1778,6 +1857,7 @@ balance only its own account can see, so it shows here only where that account h
 <div><dt>put some to work</dt><dd class="ok">{using}</dd></div>
 <div><dt>AI balance earned</dt><dd>{usd(earned)}</dd></div>
 <div><dt>spending confirmed</dt><dd class="ok">{len(confirmed)}</dd></div></dl></section>
+{active_section(feed)}
 {where_it_went(tot, kinds) if credit else ""}
 <section class="workboard" aria-labelledby="board-h"><div class="sec-head"><div><h2 id="board-h">Every agent</h2>
 <p class="sub">The biggest share put to work first. Tap a column to sort.</p></div></div>
@@ -1969,6 +2049,8 @@ purchase.</p>
 did with it. CREDIT moved out can still become compute in someone else’s hands: that is the section on compute above.
 <a href="work.html">Every agent’s CREDIT →</a></p>
 {share_bars([(k, label, note, c[key]) for k, label, key, note in WORK_KINDS], "CREDIT")}
+<p class="sub">{plural(len(n.get("active_week") or []), "agent")} put CREDIT to work in the last 7 days.
+<a href="work.html#active">Which ones, day by day →</a></p>
 <h3 class="nsub">Stake taken out</h3>
 <p class="sub">Half of an agent’s fees is staked as ORBIO, and since 1 October an owner can take it out at any time:
 {plural(s["owners_out"], "owner")} have taken {num(s["withdrawn"])} of the {num(s["staked"])} ORBIO staked.</p>
@@ -2760,6 +2842,9 @@ other prices).</li>
 <code>credit.minted</code> and <code>credit.activated</code>, and <code>stake.staked</code> and <code>stake.withdrawn</code>.</li>
 <li><code>credit</code>: the CREDIT agents' fees minted to their wallets: <code>minted</code>, <code>activated</code> (by the
 agent's own wallet), <code>held</code> and <code>moved_out</code> (sold, sent, or used from another wallet).</li>
+<li><code>active_week</code>: the agents that put CREDIT to work in the last 7 days, most first, each with <code>token</code>,
+<code>symbol</code>, <code>name</code>, <code>orbio_agent</code>, <code>verdict</code> and <code>credit</code> (put to work in those
+days). Each agent's day-by-day figures are in its token record, under <code>compute</code>.</li>
 <li><code>activations</code>: every CREDIT activation since the first on 15 September, by who sent it. Activating burns CREDIT
 into an Orbio account's compute balance. <code>exchange</code> is Orbio's exchange (bought and activated for the buyer),
 <code>own</code> a wallet activating its own CREDIT, <code>other</code> anyone activating for someone else; each has
@@ -2778,8 +2863,9 @@ had sold 90% or more of it within 30 minutes (<code>sold</code>).</li>
 <li><code>days[]</code>: one entry a UTC day since Orbio's first, with <code>day</code>; agents launched that day
 (<code>launches</code>, and <code>verified</code>, <code>copies</code> and <code>linked</code> among them) and their first-10-second
 buys (<code>early</code>, <code>early_sold</code>); CREDIT activated that day by sender (<code>exchange</code>, <code>own</code>,
-<code>other</code>); accounts buying CREDIT for the first time (<code>new_buyers</code>); and ORBIO taken out of stake
-(<code>pulled</code>).</li>
+<code>other</code>); accounts buying CREDIT for the first time (<code>new_buyers</code>); ORBIO taken out of stake
+(<code>pulled</code>); and the agents that put CREDIT to work that day (<code>agents_working</code>) and how much
+(<code>agents_credit</code>).</li>
 <li><code>history[]</code>: one snapshot of the totals a UTC day from 22 October, with the same fields as the top level apart from
 <code>days</code> and <code>history</code>; <code>at</code> is when each was taken.</li></ul>
 <h2>Token fields worth knowing</h2><ul>
@@ -2801,6 +2887,10 @@ the token's extra creator fee on every buy and sell, on top of Pons's 1%.</li>
 (<code>o/&lt;id&gt;.html</code>): two Orbio agents or more, or a copier ring. Wallets are grouped when one gave another its first
 ETH through throwaway wallets only, so an exchange or a busy wallet never joins two. It suggests one operator; it doesn't prove
 one. The id is the group's earliest wallet on file, and changes if a later trace reaches further back.</li>
+<li><code>compute</code> (Orbio agents): the CREDIT the agent's wallet put to work, day by day. <code>days</code> is
+[day, CREDIT] for each UTC day it activated any since the 1 October upgrade (every wallet it has had included; a wallet shared
+with other agents is split by what each one's fees minted), <code>week</code> the last 7 days, <code>active_days</code> how many
+days, and <code>earned</code> [day, CREDIT minted, fees in ORBIO] for each day its running totals grew, from 23 October.</li>
 <li><code>flags[]</code> say how the token came to be on file, and warn. <code>VAULT</code>: launched through Orbio's launchpad.
 <code>WIDE</code>: launched on Pons outside Orbio, and first read beyond {NAME}'s Orbio coverage: on request, or in its chain-wide trial
 (30 Sep–3 Oct). It says how the file came about, never what the verdict is (a <code>WIDE</code> token can be verified). It gets a page
@@ -2996,6 +3086,8 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .wpct{font:700 24px/1 var(--mono);color:var(--k);font-variant-numeric:tabular-nums;text-align:right;min-width:3.2ch}
 .wamt{font:500 14px var(--mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}.wamt small{color:var(--muted);font-size:11px}
 .wn{font-size:13px;color:var(--accent);white-space:nowrap}.wrow:disabled .wn{color:var(--muted)}
+.mbars{display:inline-flex;align-items:flex-end;gap:1px;width:120px;height:22px;vertical-align:middle;
+  border-bottom:1px solid var(--rule-2)}.mbars i{flex:1;background:var(--ok);border-radius:1px 1px 0 0}
 .nsec{margin-top:48px}.nsub{margin:30px 0 0;font:700 18px var(--display)}.k-acc{--k:var(--accent)}
 .tshare{display:flex;align-items:center;gap:10px;min-width:11rem;font:500 14px var(--mono);font-variant-numeric:tabular-nums}
 .tshare .wtrack{flex:1}.toptable{margin-top:16px}
