@@ -284,6 +284,7 @@ NAV = (("index.html", "Numbers"),
        ("Agents", (("launches.html#live", "New launches", "every Orbio launch as it lands"),
                    ("launches.html#board", "The board", "agents ranked by what they’ve proven"),
                    ("agents.html", "Every agent", "the whole list, to sort and search"),
+                   ("going.html", "Still going", "which agents still trade, day by day"),
                    ("work.html", "At work", "what agents do with their CREDIT"))),
        ("Risk", (("scams.html", "Impersonators", "copies of real projects"),
                  ("operators.html", "Operators", "the wallets behind many launches"),
@@ -1959,7 +1960,26 @@ def numbers_insights(n: dict) -> dict[str, tuple[str, str]]:
     if pct(n["selloff"]["sold"], n["selloff"]["buyers"]) > 50:
         out["bots"] = ("Launch bots flip", f"{pct(n['selloff']['sold'], n['selloff']['buyers']):.0f}% of buys in an agent’s first "
                        f"10 seconds were sold within 30 minutes: the first buyers are rarely the holders.")
+    m = n.get("market") or {}
+    if m.get("book") and m.get("used_day") and m["book"] > 60 * m["used_day"]:
+        out["market"] = ("Far more compute is for sale than in use", f"{num(m['book'])} CREDIT is for sale on Orbio’s exchange"
+                         + (f", {pct(m['book'], m['supply']):.0f}% of all CREDIT" if m.get("supply") else "")
+                         + f". Orbio’s gateway used {usd(m['used_day'])} of compute a day over the last 30 days, so what’s for sale "
+                         f"would cover {m['book'] / m['used_day']:.0f} days of it.")
+    go = n.get("going") or {}
+    real, rest = going_split(go)
+    if real[0] and rest[0] and pct(real[1], real[0]) > 2 * pct(rest[1], rest[0]):
+        out["going"] = ("Real projects keep trading; the rest stop", f"Of the agents over a week old, {pct(real[1], real[0]):.0f}% "
+                        f"of real projects traded in the last 7 days, against {pct(rest[1], rest[0]):.0f}% of the rest: "
+                        f"{go['trading']} of {go['old']:,} agents in all.")
     return out
+
+
+def going_split(go: dict) -> tuple[list, list]:
+    """[agents, still trading] of the real projects and of every other agent over a week old (proof_index.going_numbers)."""
+    kinds = go.get("by_kind") or {}
+    real = kinds.get("verified") or [0, 0]
+    return real, [sum(v[i] for k, v in kinds.items() if k != "verified") for i in (0, 1)]
 
 
 EXIT_LABELS = ("Within an hour", "1 to 6 hours", "6 to 24 hours", "1 to 3 days", "3 to 7 days", "Later")
@@ -2079,10 +2099,14 @@ project, a launch from wallets a copier funded, or none of these proven.</p>
                      ("linked", "from a copier’s wallets", "s-warn"), ("rest", "none proven", "s-mut")),
            "Orbio agents launched per day", "")}"""
 
+    m = n.get("market") or {}
     sections = (("fees", "Who earns the fees", fees), ("top", "The agents that carry it", leaders),
+                ("going", "Who’s still going", going_html(n.get("going") or {}, lead("going"))),
+                ("market", "The compute market", market_html(m, lead("market")) if m.get("days") else ""),
                 ("bought", "Compute: bought or earned", bought), ("buyers", "Who is buying compute", buyers),
                 ("keep", "What agents keep", keep), ("grad", "Which agents graduate", graduated),
                 ("bots", "The first ten seconds", bots), ("launch", "Launches", launch))
+    sections = tuple(x for x in sections if x[2])  # a section whose figures aren't gathered yet
     toc = "".join(f'<li><a href="#n-{k}">{said[k][0]}</a></li>' for k, _, _ in sections if k in said)
     body = "".join(f'<section class="nsec{" where" if k in ("fees", "keep", "grad") else ""}" id="n-{k}" aria-labelledby="n-{k}-h">'
                    f'<h2 id="n-{k}-h">{i} · {title}</h2>{html}</section>' for i, (k, title, html) in enumerate(sections, 1))
@@ -2107,9 +2131,153 @@ per agent. Fees are counted in ORBIO; their dollar value uses today’s price, n
 <li>CREDIT activations are CREDIT’s own <code>Activated</code> logs, every one since the first on 15 September. Orbio’s
 exchange is the address Orbio publishes (<code>/api/protocol/status</code>).</li>
 <li>What an account spends from its compute balance isn’t on the chain, so it isn’t here.</li>
+<li>The compute market is Orbio’s own public figures: its exchange’s book, its card checkout’s quote and the compute its gateway
+served each day (<code>/api/analytics</code>, which keeps 90 days; Dossier keeps each day). The book’s history before
+24 October is the exchange’s CREDIT balance at each day’s end, from CREDIT’s transfers.</li>
+<li>An agent traded on a day its bonding curve’s fill moved or a trade of it is on the chain, or once it graduated, a day its
+pool has a trade of it{f", kept from {day_name({'day': n['going']['from']})}" if (n.get("going") or {}).get("from") else ""}.</li>
 <li>Each section’s headline is written from its figures each time the page is built, and shows only while they hold.</li>
 <li>The same figures are in <a href="api/v1/numbers.json"><code>api/v1/numbers.json</code></a>, with one snapshot of the totals
 a day from 22 October.</li></ul></section>"""
+
+
+def market_html(m: dict, lead: str) -> str:
+    """The compute market (user, 24 Oct; proof_index.market_numbers): the CREDIT for sale on Orbio's exchange against the
+    compute its gateway uses, day by day, what a CREDIT costs where, and the book by price."""
+    book, used = m.get("book"), m.get("used_day")
+    prices = [(k, label, note, x, f"${x:.2f}", f"{1 - x:.0%} off" if x < 1 else "") for k, label, note, x in (
+        ("held", "Face value", "what one CREDIT buys in compute", 1.0),
+        ("acc", "By card", "Orbio’s checkout, for a $20 buy, fees included", m.get("card")),
+        ("out", "On a DEX", "CREDIT’s deepest pool", m.get("dex")),
+        ("bad", "Cheapest on the book", "the lowest-priced order on Orbio’s exchange", m.get("best"))) if x]
+    bands: dict[int, float] = {}
+    for price, credit in m.get("levels") or []:  # ten-cent bands of the price, $1.00 with the nineties
+        lo = min(int(round(price * 100, 6)) // 10 * 10, 90)
+        bands[lo] = bands.get(lo, 0) + credit
+    whole = sum(bands.values())
+    ladder = hbars([("out", f"{lo}–{lo + 9 if lo < 90 else 100}¢", "", x / whole, f"{100 * x / whole:.0f}%", f"{num(x)} <small>CREDIT</small>")
+                    for lo, x in sorted(bands.items())]) if whole else ""
+    on_book = [d for d in m["days"] if d["book"] is not None]
+    return f"""{lead}<p class="sub">Compute on Orbio is paid in CREDIT, $1 of compute each. Holders, stakers’ rewards included, sell
+CREDIT on Orbio’s exchange, and buyers by card or on chain draw from it. What is for sale, against what Orbio’s gateway served:</p>
+<dl class="tally"><div><dt>CREDIT for sale</dt><dd class="warn">{num(book)}</dd></div>
+{f'<div><dt>of all CREDIT</dt><dd>{100 * book / m["supply"]:.0f}%</dd></div>' if book and m.get("supply") else ""}
+<div><dt>compute used a day, last 30 days</dt><dd class="ok">{usd(used)}</dd></div>
+{f'<div><dt>days of that use for sale</dt><dd class="warn">{book / used:.0f}</dd></div>' if book and used else ""}</dl>
+{'<h3 class="nsub">CREDIT for sale, day by day</h3>' + day_bars(on_book, (("book", "CREDIT for sale", "s-warn"),),
+ "CREDIT for sale on Orbio’s exchange at each day’s end", "CREDIT") if on_book else ""}
+<h3 class="nsub">Compute used on Orbio’s gateway, per day</h3>
+{day_bars(m["days"], (("used", "compute used", "s-acc"),), "Compute Orbio’s gateway served per day, in dollars", "USD")}
+<h3 class="nsub">What a CREDIT costs</h3>
+<p class="sub">One CREDIT buys $1 of compute. What it costs to buy one, where:</p>{hbars(prices)}
+{f'<h3 class="nsub">The book by price</h3><p class="sub">The CREDIT for sale on Orbio’s exchange, by the price asked per CREDIT:</p>{ladder}' if ladder else ""}"""
+
+
+GOING_KINDS = (("work", "The project’s own token", "its own X account or site claims it", "verified"),
+               ("held", "None proven", "no project has claimed or disowned it", "other"),
+               ("bad", "Copies of a project", "the project shows another contract or disowns it", "scam"),
+               ("out", "From a copier’s wallets", "funded through wallets that launched copies", "linked"))
+GOING_STATUS = (("work", "Proven", "PROVEN"), ("work", "Live", "LIVE"), ("acc", "Building", "BUILDING"),
+                ("held", "Unproven", "UNPROVEN"), ("bad", "Impersonator", "SCAM"))
+
+
+def going_bars(tally: dict, rows: tuple) -> str:
+    """Of each group of agents a week old or more, the share that traded in the last 7 days: rows are (k-class, label, note,
+    key) or (k-class, label, key); `tally` is {key: [agents, trading]}."""
+    out = []
+    for r in rows:
+        k, label, key, note = r[0], r[1], r[-1], (r[2] if len(r) == 4 else "")
+        n, still = tally.get(key) or [0, 0]
+        if n:
+            out.append((k, label, note, still / n, f"{100 * still / n:.0f}%", f"{still} of {n:,}"))
+    return hbars(out)
+
+
+def going_html(go: dict, lead: str) -> str:
+    """"Who's still going" on the front page: the share of each kind of agent still trading, and the way to the page."""
+    if not go:
+        return ""
+    return f"""{lead}<p class="sub">Of the {go["old"]:,} Orbio agents a week old or more, {go["trading"]} traded in the last 7 days. Of each
+kind, the share still trading:</p>
+{going_bars(go["by_kind"], GOING_KINDS)}
+<p class="sub"><a href="going.html">Every agent still trading, day by day →</a></p>"""
+
+
+def going_page(feed: dict) -> str:
+    """Who's still going (user, 24 Oct, after @jelko___ called the compute dashboards "a window into agent consistency and
+    productivity"): which Orbio agents still trade, each one's trading days, how fast agents stop after launch, and who keeps
+    going by kind, by Dossier's score and by launch week (proof_index.going_numbers)."""
+    go, now = (feed.get("numbers") or {}).get("going") or {}, feed["generated_at"]
+    if not go:
+        return '<section class="page-head"><h1>Who’s still going</h1><p class="sub">The trading days are being gathered.</p></section>'
+    by = {t["token"]: t for t in feed["tokens"]}
+    today = time.strftime("%Y-%m-%d", time.gmtime(now))
+    span = day_range(max(go["from"], (dt.date.fromisoformat(today) - dt.timedelta(days=27)).isoformat()), today)
+    days = go["window"]
+    rank = {"PROVEN": 5, "LIVE": 4, "BUILDING": 3, "UNPROVEN": 2, "EXCLUDED": 1}
+    rows = []
+    for i, a in enumerate(go["agents"], 1):
+        t = by.get(a["token"]) or a
+        s, st = state_of(t, now) if a["token"] in by else a["verdict"], a.get("status") or ""
+        seen = set(a["days"])
+        data = (f'data-t="{a["token"]}" data-rank="{i}" data-sym="{e((a["symbol"] or "").lower())}" data-state="{s}" '
+                f'data-lt="{a["launched_at"] or 0}" data-days="{a["days14"]}" data-last="{a["last"].replace("-", "")}" '
+                f'data-status="{rank.get(st, 0)}"')
+        score = status_badge(st) if st in STATUS_TEXT else f'<span class="muted small">{e(st.title())}</span>'
+        # on a phone the verdict goes under the agent's name, so its trading days show without scrolling the table sideways
+        rows.append(f'<tr class="{"pg-off" if i > WORK_PER else ""}" {data}><td class="numcol">{i}</td><td>{tref(t)}'
+                    f'<span class="sm-only">{chip(s)}</span></td><td class="hide-sm">{chip(s)}</td><td class="hide-sm">{score}</td>'
+                    f'<td class="numcol">{a["days14"]} of {days}</td>'
+                    f'<td>{mini_bars([d in seen for d in span])}</td><td class="numcol hide-sm">{day_name({"day": a["last"]})}</td>'
+                    f'<td class="numcol hide-sm">{when(a["launched_at"])}</td></tr>')
+    head = (sort_th("rank", "#", "numcol", "ascending") + sort_th("name", "Agent") + sort_th("verdict", "Official", "hide-sm")
+            + sort_th("status", "Dossier’s score", "hide-sm") + sort_th("days", "Days traded", "numcol", tip=f"of the last {days}")
+            + f'<th>Since {day_name({"day": span[0]})}</th>' + sort_th("last", "Last traded", "numcol hide-sm")
+            + sort_th("age", "Launched", "numcol hide-sm"))
+    every = sum(1 for a in go["agents"] if a["days14"] >= days - 1)
+    after = [(n, k, of) for n, of, k in go["after"] if of]
+    real, rest = going_split(go)
+    pct = lambda x, of: f"{100 * x / of:.0f}%" if of else "—"  # noqa: E731
+    week = next((f"{100 * k / of:.0f}%" for n, k, of in after if n == go["week"]), None)
+    curve = hbars([("acc", "Launch day" if n == 0 else f"Day {n}", f"{of} agents", k / of, f"{100 * k / of:.0f}%", f"{k} of {of}")
+                   for n, k, of in after])
+    weeks = hbars([("acc", f"Week of {day_name({'day': wk})}", f"{n:,} launched", k / n, f"{100 * k / n:.0f}%", f"{k} of {n:,}")
+                   for wk, n, k in go["cohorts"] if n])
+    return f"""<section class="page-head"><p class="kicker">Who’s still going</p><h1>Which Orbio agents are still trading</h1>
+<p class="sub">Most Orbio agents trade on the day they launch, and few for long after. This page follows the ones that keep going:
+the days each agent’s token traded, from its bonding curve on the chain, or from its pool once it graduated. Dossier has kept
+them since {day_name({"day": go["from"]})}.</p>
+<dl class="tally"><div><dt>agents a week old or more</dt><dd>{go["old"]:,}</dd></div>
+<div><dt>traded in the last 7 days</dt><dd class="ok">{go["trading"]}</dd></div>
+<div><dt>traded on {days - 1}+ of the last {days} days</dt><dd class="ok">{every}</dd></div>
+<div><dt>real projects still trading</dt><dd class="ok">{pct(real[1], real[0])}</dd></div>
+<div><dt>the rest still trading</dt><dd class="bad">{pct(rest[1], rest[0])}</dd></div></dl></section>
+<section class="nsec" id="agents" aria-labelledby="agents-h"><h2 id="agents-h">Every agent still trading</h2>
+<p class="sub">{plural(len(rows), "agent")} traded at least once in the last {days} days, the most days first. Each bar is a day
+it traded. Tap a column to sort.</p>
+<div class="scroll"><table class="list sortable toptable going" data-per="{WORK_PER}" data-label="Pages of agents"><thead><tr>{head}</tr></thead>
+<tbody>{"".join(rows) or f'<tr><td colspan="8" class="muted">No agent traded in the last {days} days.</td></tr>'}</tbody></table></div></section>
+<section class="nsec" id="after" aria-labelledby="after-h"><h2 id="after-h">How fast agents stop trading</h2>
+<p class="sub">Of the agents launched since {day_name({"day": go["from"]})}, the share that traded on each day after launch
+{f"({week} still did a week on)" if week else ""}. A day counts once it has ended. {go["never"]} of those
+{go["launched"]} agents have never been traded at all, not even on launch day.</p>{curve}</section>
+<section class="nsec where" id="kinds" aria-labelledby="kinds-h"><h2 id="kinds-h">Who keeps going</h2>
+<p class="sub">Of each kind of agent a week old or more, the share that traded in the last 7 days:</p>
+{going_bars(go["by_kind"], GOING_KINDS)}
+<h3 class="nsub">By Dossier’s score</h3>
+<p class="sub">Dossier scores each agent on what it can prove: a product that works, code, a team, output. The same share, by
+the status that score gives:</p>{going_bars(go["by_status"], GOING_STATUS)}
+<h3 class="nsub">By the week it launched</h3>
+<p class="sub">Agents a week old or more, by the week they launched (from Monday), and the share still trading:</p>{weeks}</section>
+<section class="method"><h2>How it’s measured</h2><ul>
+<li>A token traded on a UTC day when its bonding curve’s fill moved that day, a trade of it on the curve is on the chain, or,
+once it graduated, its pool has a trade of it (Orbio’s trades list, and before 24 October its pool’s transfers on the chain).</li>
+<li>On its launch day, a curve holding any ORBIO was bought: launch bots often trade before Dossier’s first reading, then stop.</li>
+<li>Days are kept from {day_name({"day": go["from"]})}, when the curves’ history on file began. “Still trading” is a trade in the
+last 7 days, counted over agents a week old or more.</li>
+<li>Trading is not the same as working: an agent can trade while nothing is built, and build with no trades. What each one does
+with its compute is <a href="work.html">At work</a>; what it can prove is its file.</li>
+<li>The same figures are in <a href="api/v1/numbers.json"><code>api/v1/numbers.json</code></a> as <code>going</code>.</li></ul></section>"""
 
 
 # ----------------------------------------------------------------- Sign in with Orbio apps
@@ -2867,7 +3035,22 @@ buys (<code>early</code>, <code>early_sold</code>); CREDIT activated that day by
 (<code>pulled</code>); and the agents that put CREDIT to work that day (<code>agents_working</code>) and how much
 (<code>agents_credit</code>).</li>
 <li><code>history[]</code>: one snapshot of the totals a UTC day from 22 October, with the same fields as the top level apart from
-<code>days</code> and <code>history</code>; <code>at</code> is when each was taken.</li></ul>
+<code>days</code>, <code>history</code>, <code>market</code> and <code>going</code>; <code>at</code> is when each was taken.</li>
+<li><code>market</code>: Orbio's compute market, from its public figures. <code>book</code> is the CREDIT for sale on Orbio's
+exchange, <code>best</code> its cheapest price per CREDIT in dollars and <code>levels</code> pairs of [price, CREDIT]; <code>card</code>
+is what Orbio's checkout charges a CREDIT on a $20 buy, fees included, <code>dex</code> the price in CREDIT's deepest pool, and
+<code>supply</code> all CREDIT in existence. <code>at</code> is the day they were read. <code>used_day</code> is the compute in dollars
+Orbio's gateway served a day, over the last 30 whole days. <code>days[]</code> has each day's <code>used</code> and
+<code>book</code> (the CREDIT for sale at the day's end; <code>null</code> before 15 September).</li>
+<li><code>going</code>: which agents still trade, from the UTC days each one's token traded, kept from <code>from</code>.
+<code>old</code> is the agents <code>week</code> (7) days old or more and <code>trading</code> how many of them traded in the last
+7 days; <code>by_kind</code> (<code>verified</code>, <code>scam</code>, <code>linked</code>, <code>other</code>), <code>by_status</code>
+(Dossier's score status) split that as [agents, still trading], and <code>cohorts</code> by launch week as [its Monday, agents,
+still trading]. <code>after</code> is [days after launch, agents launched since <code>from</code> that reached that
+day, how many traded on it]; <code>launched</code> is how many agents launched since <code>from</code> and <code>never</code>
+how many of them have never traded. <code>agents</code> is every agent that traded in the last <code>window</code> (14) days, the most days
+first, with <code>days14</code>, <code>days28</code> (<code>null</code> until 28 days are kept), <code>last</code> (its last trading
+day) and <code>days</code> (its trading days in the last 28).</li></ul>
 <h2>Token fields worth knowing</h2><ul>
 <li><code>verdict.verdict</code> is <code>verified</code>, <code>scam</code> or <code>unverified</code>, and
 <code>verdict.receipts</code> links the post or page it rests on.</li>
@@ -3108,7 +3291,7 @@ input[type=search]{width:100%;font:15px var(--sans);padding:13px 16px;border:1px
 .workboard{margin-top:44px}.workboard .filter{max-width:460px}
 .did{display:inline-block;font:600 12.5px/1.2 var(--sans);padding:4px 10px;border-radius:999px;white-space:nowrap;background:var(--k-bg);color:var(--k)}
 .did.mixed,.did.none{background:none;border:1px solid var(--rule-2);color:var(--muted);font-weight:500}
-.did-sm{display:none}th .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--k);margin-right:6px;vertical-align:1px}
+.did-sm,.sm-only{display:none}th .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--k);margin-right:6px;vertical-align:1px}
 .sec-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px 24px;flex-wrap:wrap;margin-bottom:16px}
 .filters{display:flex;gap:6px;flex-wrap:wrap}
 .filters button{font:600 13px var(--sans);display:inline-flex;gap:7px;align-items:center;padding:7px 12px;border-radius:999px;border:1px solid var(--rule-2);background:var(--sheet);color:var(--ink-2);cursor:pointer}
@@ -3734,7 +3917,7 @@ th[data-sort] button{padding:8px 0}
 .wl{grid-area:l}.wtrack{grid-area:t}.wpct{grid-area:p;font-size:20px}.wamt{grid-area:a;text-align:left}.wn{grid-area:n;text-align:right}
 .pair .wrow{grid-template-areas:"l l l" "t t t" "p p p"}.wtwo{grid-area:t}.wtwo .wtrack{grid-area:auto}
 .wpct.two{flex-direction:row;justify-content:space-between;align-items:baseline;font-size:16px}
-td .did-sm{display:block;margin-top:6px;width:max-content}}
+td .did-sm,td .sm-only{display:block;margin-top:6px;width:max-content}}
 """
 DARK = ("--bg:#090d12;--sheet:#10161f;--sheet-2:#151d28;--ink:#e7ecf3;--ink-2:#b4bfcd;--muted:#8792a4;--rule:#212a36;--rule-2:#324050;"
         "--accent:#8fa3ff;--accent-bg:#18214a;--scrim:rgba(6,9,14,.88);"
@@ -4347,10 +4530,11 @@ def token_json(t: dict, feed: dict) -> str:
 
 
 def list_pages(feed: dict, home_too: bool = True) -> list[tuple[str, str, str]]:
-    """(path, title, body) of the pages built from the whole feed. `home_too` adds the two the hot lane leaves to the full
-    build: the front page, Orbio in numbers (its figures change with each export, not with a launch), and new launches (it
-    draws launches and verdicts from live.json itself, and its launch map is slow to lay out)."""
+    """(path, title, body) of the pages built from the whole feed. `home_too` adds the ones the hot lane leaves to the full
+    build: the front page, Orbio in numbers, and Who's still going (their figures change with each export, not with a
+    launch), and new launches (it draws launches and verdicts from live.json itself, and its launch map is slow to lay out)."""
     return ([("index.html", f"{NAME}: Orbio in numbers", numbers_page(feed)),
+             ("going.html", f"Which Orbio agents are still trading · {NAME}", going_page(feed)),
              ("launches.html", f"New Orbio launches · {NAME}", home(feed))] if home_too else []) + [
         ("agents.html", f"Every Orbio agent · {NAME}", agents_page(feed)),
         ("scams.html", f"Impersonators caught · {NAME}", scams_page(feed)),
@@ -4444,8 +4628,8 @@ def build(feed: dict, out: Path = OUT, tick=None) -> int:
     (tmp / "robots.txt").write_text("User-agent: *\nAllow: /\n" + (f"Sitemap: {site}/sitemap.xml\n" if site else ""), "utf-8")
     if site:
         live_cases = [c for c in CASES if c.get("status") == "published"]  # never a draft, even on the dev server
-        pages = ["", "launches.html", "agents.html", "scams.html", "operators.html", "apps.html", "work.html", "token.html",
-                 "method.html", "api.html"] \
+        pages = ["", "launches.html", "agents.html", "going.html", "scams.html", "operators.html", "apps.html", "work.html",
+                 "token.html", "method.html", "api.html"] \
             + [f't/{t["token"]}.html' for t in feed["tokens"]] + [f'o/{o["id"]}.html' for o in ops] \
             + (["cases.html"] + [f'case/{c["slug"]}.html' for c in live_cases] if live_cases else [])
         # a file's last change, so a search engine reads a verdict again when it changes: launch, verified or flagged
